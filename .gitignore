@@ -1,0 +1,14 @@
+# SwiftPM build output
+.build/
+Package.resolved
+
+# Built app bundle (produced by build-app.sh)
+*.app/
+
+# macOS
+.DS_Store
+
+# Xcode (if ever opened there)
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
