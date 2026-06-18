@@ -1,11 +1,16 @@
 import AppKit
 import ServiceManagement
 
-// ── Config ───────────────────────────────────────────────
-let MAX_TRACK  = 18
-let MAX_ARTIST = 18
-let PREV_RESTART_SECS = 3.0   // within this many secs, "back" goes to previous track; later it restarts
-// ─────────────────────────────────────────────────────────
+// MARK: - Config
+
+/// Compile-time defaults. Runtime overrides come from `Settings` (UserDefaults).
+enum Config {
+    static let maxTrack = 18
+    static let maxArtist = 18
+    static let prevRestartSecs = 3.0   // within this many secs, "back" goes to the previous track; later it restarts
+    static let buttonWidth: CGFloat = 16
+    static let stackSpacing: CGFloat = 6
+}
 
 func trunc(_ s: String, _ n: Int) -> String {
     s.count <= n ? s : String(s.prefix(n - 1)) + "…"
@@ -43,7 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // menu-bar slot, so the notch only ever clips this one item.
         stack = NSStackView(views: [label, prev, playButton, next])
         stack.orientation = .horizontal
-        stack.spacing = 6
+        stack.spacing = Config.stackSpacing
         stack.alignment = .centerY
         stack.translatesAutoresizingMaskIntoConstraints = false
         host.addSubview(stack)
@@ -86,14 +91,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         b.target = self
         b.action = action
         b.translatesAutoresizingMaskIntoConstraints = false
-        b.widthAnchor.constraint(equalToConstant: 16).isActive = true
+        b.widthAnchor.constraint(equalToConstant: Config.buttonWidth).isActive = true
         return b
     }
 
     // Smart previous: near the start → go to the previous track; otherwise restart
     // the current one (so a second press from the restarted track also goes back).
     @objc func prev() {
-        spotify("if player position > \(PREV_RESTART_SECS) then\n" +
+        spotify("if player position > \(Config.prevRestartSecs) then\n" +
                 "set player position to 0\n" +
                 "else\n" +
                 "previous track\n" +
@@ -130,7 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func update(track: String, artist: String, state: String) {
-        let title = "\(trunc(track, MAX_TRACK)) – \(trunc(artist, MAX_ARTIST))"
+        let title = "\(trunc(track, Config.maxTrack)) – \(trunc(artist, Config.maxArtist))"
         let playing = state.lowercased() == "playing"
         DispatchQueue.main.async {
             self.label.stringValue = track.isEmpty ? "♪" : title
