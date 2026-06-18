@@ -75,6 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var label: NSTextField!
     var playButton: NSButton!
     var loginItem: NSMenuItem!
+    private var pendingRefresh: DispatchWorkItem?
 
     func applicationDidFinishLaunching(_ n: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -159,7 +160,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         spotify.run("playpause") { [weak self] _ in self?.refresh() }
     }
 
-    @objc func changed() { refresh() }
+    // Coalesce PlaybackStateChanged bursts (Spotify fires several per change) into
+    // a single refresh, cancelling any still-pending one.
+    @objc func changed() {
+        pendingRefresh?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.refresh() }
+        pendingRefresh = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: work)
+    }
 
     // MARK: - Launch at login (SMAppService, macOS 13+)
     @objc func toggleLogin() {
