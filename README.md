@@ -68,13 +68,24 @@ Notes:
 
 ## Configuration
 
-Edit the constants at the top of `Sources/SpotifyMenuBar/main.swift`, then rebuild:
+Defaults live in the `Config` enum at the top of
+`Sources/SpotifyMenuBar/main.swift`. You can override them at runtime — no
+rebuild, no restart — with `defaults write`; changes apply on the next playback
+change:
 
-| Constant | Default | Meaning |
-|---|---|---|
-| `MAX_TRACK` | `18` | Max characters of the track name before truncation (`…`) |
-| `MAX_ARTIST` | `18` | Max characters of the artist name |
-| `PREV_RESTART_SECS` | `3.0` | Below this playback position, "back" goes to the previous track; above it, "back" restarts the current track |
+```bash
+defaults write com.local.SpotifyMenuBar maxTrack -int 24
+defaults write com.local.SpotifyMenuBar maxArtist -int 24
+defaults write com.local.SpotifyMenuBar prevRestartSecs -float 2.5
+```
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `maxTrack` | Int | `18` | Max characters of the track name before truncation (`…`) |
+| `maxArtist` | Int | `18` | Max characters of the artist name |
+| `prevRestartSecs` | Double | `3.0` | Below this playback position, "back" goes to the previous track; above it, "back" restarts the current track |
+
+Remove an override with `defaults delete com.local.SpotifyMenuBar maxTrack`.
 
 ## How it works
 

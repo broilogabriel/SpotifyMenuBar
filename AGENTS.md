@@ -54,14 +54,28 @@ will likely reintroduce the bug noted.
 8. **Launch at login uses `SMAppService.mainApp`** (macOS 13+), toggled from the
    right-click menu. The login-item checkmark is refreshed in `menuNeedsUpdate(_:)`
    (the menu is built once, so don't set the state only at creation time).
+9. **AppleScript runs off the main thread** on `SpotifyClient`'s dedicated serial
+   queue (NSAppleScript is not thread-safe); completions hop back to main. Keeping it
+   synchronous on main froze the UI during Apple Events round-trips.
+10. **Running-check via `NSWorkspace`, never `tell application`.** Detect whether
+    Spotify is up with `NSWorkspace.runningApplications` (bundle id
+    `com.spotify.client`). A `tell application "Spotify"` query can auto-launch
+    Spotify just to read state — `NSWorkspace` doesn't.
+11. **`PlaybackStateChanged` is debounced (~100 ms).** Spotify fires several
+    notifications per change; coalescing avoids redundant AppleScript queries.
+12. **Icon buttons carry VoiceOver labels** (`accessibilityDescription`): "Previous",
+    "Play or pause", "Next". The label field is already readable.
+13. **`Settings.current()` clamps UserDefaults values** (`maxTrack`/`maxArtist` ≥ 1,
+    `prevRestartSecs` ≥ 0) so a bad `defaults write` can't break layout.
 
 ## Spotify integration facts
 
 - Control is via `NSAppleScript` against the running Spotify desktop app. No API
   keys, OAuth, developer account, or network — and do not add any.
-- The `spotify(_:)` helper wraps its argument in a full
-  `tell application "Spotify" … end tell` block, so you can pass multi-line
-  AppleScript (e.g. `if … then … end if`), not just one-liners.
+- `SpotifyClient.run(_:then:)` wraps its argument in a full
+  `tell application "Spotify" … end tell` block (built in `SpotifyClient.execute`),
+  so you can pass multi-line AppleScript (e.g. `if … then … end if`), not just
+  one-liners. It runs on a private serial queue and delivers the result on main.
 - Verified-available scripting commands: `playpause`, `play`, `pause`,
   `next track`, `previous track`. Properties: `current track` → `name`, `artist`,
   `album`, `artwork`; plus `player state`, `player position`. (Source:
@@ -124,7 +138,8 @@ When writing review comments (PR reviews, inline comments), follow
 
 - Plain Swift + AppKit only. **No third-party dependencies.** No SwiftUI unless there
   is a strong reason.
-- Keep tunables as the `UPPER_CASE` constants in the `── Config ──` block at the top.
+- Tunables live in the `Config` caseless enum (lowerCamelCase, Swift-idiomatic).
+  Runtime overrides are read from `UserDefaults` via `Settings.current()`.
 - Match the existing terse, comment-the-why style. Comments explain *why* a
   non-obvious choice exists (usually a bug it prevents), not *what* the code does.
 - Keep it a single file unless it grows substantially.

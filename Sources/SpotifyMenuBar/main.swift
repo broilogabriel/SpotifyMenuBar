@@ -1,31 +1,81 @@
 import AppKit
 import ServiceManagement
 
-// ── Config ───────────────────────────────────────────────
-let MAX_TRACK  = 18
-let MAX_ARTIST = 18
-let PREV_RESTART_SECS = 3.0   // within this many secs, "back" goes to previous track; later it restarts
-// ─────────────────────────────────────────────────────────
+// MARK: - Config
+
+/// Compile-time defaults. Runtime overrides come from `Settings` (UserDefaults).
+enum Config {
+    static let maxTrack = 18
+    static let maxArtist = 18
+    static let prevRestartSecs = 3.0   // within this many secs, "back" goes to the previous track; later it restarts
+    static let buttonWidth: CGFloat = 16
+    static let stackSpacing: CGFloat = 6
+}
+
+/// Runtime-overridable tunables. Read fresh on every refresh so `defaults write`
+/// takes effect on the next playback change — no restart. Values are clamped so a
+/// bad write can't break layout.
+struct Settings {
+    let maxTrack: Int
+    let maxArtist: Int
+    let prevRestartSecs: Double
+
+    static func current() -> Settings {
+        let d = UserDefaults.standard
+        func int(_ key: String, _ fallback: Int) -> Int {
+            max(1, d.object(forKey: key) as? Int ?? fallback)
+        }
+        return Settings(
+            maxTrack: int("maxTrack", Config.maxTrack),
+            maxArtist: int("maxArtist", Config.maxArtist),
+            prevRestartSecs: max(0, d.object(forKey: "prevRestartSecs") as? Double ?? Config.prevRestartSecs))
+    }
+}
 
 func trunc(_ s: String, _ n: Int) -> String {
     s.count <= n ? s : String(s.prefix(n - 1)) + "…"
 }
 
-@discardableResult
-func spotify(_ body: String) -> String? {
-    var err: NSDictionary?
-    let out = NSAppleScript(source: "tell application \"Spotify\"\n\(body)\nend tell")?
-        .executeAndReturnError(&err)
-    if let err { NSLog("AppleScript error: \(err)"); return nil }
-    return out?.stringValue
+// MARK: - Spotify control
+
+final class SpotifyClient {
+    private let queue = DispatchQueue(label: "com.local.SpotifyMenuBar.applescript")
+
+    /// Is the Spotify desktop app running? Checked via NSWorkspace so we never
+    /// trigger the `tell application "Spotify"` auto-launch just to read state.
+    var isRunning: Bool {
+        NSWorkspace.shared.runningApplications
+            .contains { $0.bundleIdentifier == "com.spotify.client" }
+    }
+
+    /// Runs AppleScript on a dedicated serial thread (NSAppleScript is not
+    /// thread-safe) and delivers the result back on the main thread.
+    func run(_ body: String, then completion: ((String?) -> Void)? = nil) {
+        queue.async {
+            let result = SpotifyClient.execute(body)
+            if let completion {
+                DispatchQueue.main.async { completion(result) }
+            }
+        }
+    }
+
+    private static func execute(_ body: String) -> String? {
+        var err: NSDictionary?
+        let out = NSAppleScript(source: "tell application \"Spotify\"\n\(body)\nend tell")?
+            .executeAndReturnError(&err)
+        if let err { NSLog("AppleScript error: \(err)"); return nil }
+        return out?.stringValue
+    }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+    let spotify = SpotifyClient()
     var statusItem: NSStatusItem!
     var stack: NSStackView!
     var label: NSTextField!
     var playButton: NSButton!
     var loginItem: NSMenuItem!
+    private var pendingRefresh: DispatchWorkItem?
 
     func applicationDidFinishLaunching(_ n: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -35,15 +85,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         label.font = NSFont.menuBarFont(ofSize: 0)
         label.textColor = .labelColor
 
-        let prev = control("backward.fill",   #selector(prev))
-        playButton = control("play.fill",      #selector(playPause))
-        let next = control("forward.fill",     #selector(next))
+        let prev = control("backward.fill", "Previous", #selector(prev))
+        playButton = control("play.fill", "Play or pause", #selector(playPause))
+        let next = control("forward.fill", "Next", #selector(next))
 
         // One status item, one custom view holding everything → a single
         // menu-bar slot, so the notch only ever clips this one item.
         stack = NSStackView(views: [label, prev, playButton, next])
         stack.orientation = .horizontal
-        stack.spacing = 6
+        stack.spacing = Config.stackSpacing
         stack.alignment = .centerY
         stack.translatesAutoresizingMaskIntoConstraints = false
         host.addSubview(stack)
@@ -77,33 +127,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refresh()
     }
 
-    func control(_ symbol: String, _ action: Selector) -> NSButton {
+    func control(_ symbol: String, _ label: String, _ action: Selector) -> NSButton {
         let b = NSButton()
-        b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
         b.imagePosition = .imageOnly
         b.isBordered = false
         b.contentTintColor = .labelColor
         b.target = self
         b.action = action
         b.translatesAutoresizingMaskIntoConstraints = false
-        b.widthAnchor.constraint(equalToConstant: 16).isActive = true
+        b.widthAnchor.constraint(equalToConstant: Config.buttonWidth).isActive = true
         return b
     }
 
-    // Smart previous: near the start → go to the previous track; otherwise restart
-    // the current one (so a second press from the restarted track also goes back).
+    // Smart previous: near the start → previous track; otherwise restart current
+    // (so a second press from the restarted track also goes back).
     @objc func prev() {
-        spotify("if player position > \(PREV_RESTART_SECS) then\n" +
-                "set player position to 0\n" +
-                "else\n" +
-                "previous track\n" +
-                "end if")
-        refresh()
+        guard spotify.isRunning else { return }   // no-op when Spotify is closed
+        let threshold = Settings.current().prevRestartSecs
+        spotify.run("if player position > \(threshold) then\n" +
+                    "set player position to 0\n" +
+                    "else\n" +
+                    "previous track\n" +
+                    "end if") { [weak self] _ in self?.refresh() }
     }
-    @objc func next()      { spotify("next track"); refresh() }
-    @objc func playPause() { spotify("playpause");  refresh() }
+    @objc func next() {
+        guard spotify.isRunning else { return }   // no-op when Spotify is closed
+        spotify.run("next track") { [weak self] _ in self?.refresh() }
+    }
+    @objc func playPause() {
+        // Always allowed — launches Spotify as the deliberate "start" gesture.
+        spotify.run("playpause") { [weak self] _ in self?.refresh() }
+    }
 
-    @objc func changed() { refresh() }
+    // Coalesce PlaybackStateChanged bursts (Spotify fires several per change) into
+    // a single refresh, cancelling any still-pending one.
+    @objc func changed() {
+        pendingRefresh?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.refresh() }
+        pendingRefresh = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: work)
+    }
 
     // MARK: - Launch at login (SMAppService, macOS 13+)
     @objc func toggleLogin() {
@@ -121,26 +185,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func refresh() {
-        guard let r = spotify(
-            "if it is running then return (name of current track) & \"\\n\" & " +
-            "(artist of current track) & \"\\n\" & (player state as string)")
-        else { return }
-        let p = r.components(separatedBy: "\n")
-        if p.count == 3 { update(track: p[0], artist: p[1], state: p[2]) }
+        guard spotify.isRunning else { reset(); return }
+        spotify.run(
+            "return (name of current track) & \"\\n\" & " +
+            "(artist of current track) & \"\\n\" & (player state as string)"
+        ) { [weak self] r in
+            guard let self else { return }
+            guard let r else { self.reset(); return }   // Spotify quit mid-query
+            let p = r.components(separatedBy: "\n")
+            if p.count == 3 { self.update(track: p[0], artist: p[1], state: p[2]) }
+        }
+    }
+
+    /// Spotify unavailable → placeholder.
+    func reset() {
+        label.stringValue = "♪"
+        label.toolTip = nil
+        playButton.image = NSImage(systemSymbolName: "play.fill", accessibilityDescription: "Play or pause")
+        resize()
     }
 
     func update(track: String, artist: String, state: String) {
-        let title = "\(trunc(track, MAX_TRACK)) – \(trunc(artist, MAX_ARTIST))"
+        let s = Settings.current()
+        let title = "\(trunc(track, s.maxTrack)) – \(trunc(artist, s.maxArtist))"
         let playing = state.lowercased() == "playing"
-        DispatchQueue.main.async {
-            self.label.stringValue = track.isEmpty ? "♪" : title
-            self.playButton.image = NSImage(
-                systemSymbolName: playing ? "pause.fill" : "play.fill",
-                accessibilityDescription: nil)
-            // Resize the single status item to fit its content.
-            self.stack.layoutSubtreeIfNeeded()
-            self.statusItem.length = self.stack.fittingSize.width + 8
-        }
+        label.stringValue = track.isEmpty ? "♪" : title
+        label.toolTip = track.isEmpty ? nil : "\(track) – \(artist)"
+        playButton.image = NSImage(
+            systemSymbolName: playing ? "pause.fill" : "play.fill",
+            accessibilityDescription: "Play or pause")
+        resize()
+    }
+
+    /// Resize the single status item to fit its content.
+    func resize() {
+        stack.layoutSubtreeIfNeeded()
+        statusItem.length = stack.fittingSize.width + 8
     }
 }
 
