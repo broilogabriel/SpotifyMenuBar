@@ -85,9 +85,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         label.font = NSFont.menuBarFont(ofSize: 0)
         label.textColor = .labelColor
 
-        let prev = control("backward.fill",   #selector(prev))
-        playButton = control("play.fill",      #selector(playPause))
-        let next = control("forward.fill",     #selector(next))
+        let prev = control("backward.fill", "Previous", #selector(prev))
+        playButton = control("play.fill", "Play or pause", #selector(playPause))
+        let next = control("forward.fill", "Next", #selector(next))
 
         // One status item, one custom view holding everything → a single
         // menu-bar slot, so the notch only ever clips this one item.
@@ -127,9 +127,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refresh()
     }
 
-    func control(_ symbol: String, _ action: Selector) -> NSButton {
+    func control(_ symbol: String, _ label: String, _ action: Selector) -> NSButton {
         let b = NSButton()
-        b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
         b.imagePosition = .imageOnly
         b.isBordered = false
         b.contentTintColor = .labelColor
@@ -201,7 +201,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func reset() {
         label.stringValue = "♪"
         label.toolTip = nil
-        playButton.image = NSImage(systemSymbolName: "play.fill", accessibilityDescription: nil)
+        playButton.image = NSImage(systemSymbolName: "play.fill", accessibilityDescription: "Play or pause")
         resize()
     }
 
@@ -210,9 +210,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let title = "\(trunc(track, s.maxTrack)) – \(trunc(artist, s.maxArtist))"
         let playing = state.lowercased() == "playing"
         label.stringValue = track.isEmpty ? "♪" : title
+        label.toolTip = track.isEmpty ? nil : "\(track) – \(artist)"
         playButton.image = NSImage(
             systemSymbolName: playing ? "pause.fill" : "play.fill",
-            accessibilityDescription: nil)
+            accessibilityDescription: "Play or pause")
         resize()
     }
 
