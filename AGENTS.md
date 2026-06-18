@@ -72,9 +72,10 @@ will likely reintroduce the bug noted.
 
 - Control is via `NSAppleScript` against the running Spotify desktop app. No API
   keys, OAuth, developer account, or network — and do not add any.
-- The `spotify(_:)` helper wraps its argument in a full
-  `tell application "Spotify" … end tell` block, so you can pass multi-line
-  AppleScript (e.g. `if … then … end if`), not just one-liners.
+- `SpotifyClient.run(_:then:)` wraps its argument in a full
+  `tell application "Spotify" … end tell` block (built in `SpotifyClient.execute`),
+  so you can pass multi-line AppleScript (e.g. `if … then … end if`), not just
+  one-liners. It runs on a private serial queue and delivers the result on main.
 - Verified-available scripting commands: `playpause`, `play`, `pause`,
   `next track`, `previous track`. Properties: `current track` → `name`, `artist`,
   `album`, `artwork`; plus `player state`, `player position`. (Source:
