@@ -12,6 +12,26 @@ enum Config {
     static let stackSpacing: CGFloat = 6
 }
 
+/// Runtime-overridable tunables. Read fresh on every refresh so `defaults write`
+/// takes effect on the next playback change — no restart. Values are clamped so a
+/// bad write can't break layout.
+struct Settings {
+    let maxTrack: Int
+    let maxArtist: Int
+    let prevRestartSecs: Double
+
+    static func current() -> Settings {
+        let d = UserDefaults.standard
+        func int(_ key: String, _ fallback: Int) -> Int {
+            max(1, d.object(forKey: key) as? Int ?? fallback)
+        }
+        return Settings(
+            maxTrack: int("maxTrack", Config.maxTrack),
+            maxArtist: int("maxArtist", Config.maxArtist),
+            prevRestartSecs: max(0, d.object(forKey: "prevRestartSecs") as? Double ?? Config.prevRestartSecs))
+    }
+}
+
 func trunc(_ s: String, _ n: Int) -> String {
     s.count <= n ? s : String(s.prefix(n - 1)) + "…"
 }
@@ -98,7 +118,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Smart previous: near the start → go to the previous track; otherwise restart
     // the current one (so a second press from the restarted track also goes back).
     @objc func prev() {
-        spotify("if player position > \(Config.prevRestartSecs) then\n" +
+        let threshold = Settings.current().prevRestartSecs
+        spotify("if player position > \(threshold) then\n" +
                 "set player position to 0\n" +
                 "else\n" +
                 "previous track\n" +
@@ -135,14 +156,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func update(track: String, artist: String, state: String) {
-        let title = "\(trunc(track, Config.maxTrack)) – \(trunc(artist, Config.maxArtist))"
+        let s = Settings.current()
+        let title = "\(trunc(track, s.maxTrack)) – \(trunc(artist, s.maxArtist))"
         let playing = state.lowercased() == "playing"
         DispatchQueue.main.async {
             self.label.stringValue = track.isEmpty ? "♪" : title
             self.playButton.image = NSImage(
                 systemSymbolName: playing ? "pause.fill" : "play.fill",
                 accessibilityDescription: nil)
-            // Resize the single status item to fit its content.
             self.stack.layoutSubtreeIfNeeded()
             self.statusItem.length = self.stack.fittingSize.width + 8
         }
