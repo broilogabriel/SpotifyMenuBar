@@ -292,6 +292,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         prevNextMenuItems(hidden: r.rung.showsPrevNext)
         resize(to: r.totalWidth)
+        logLayout(r, requested: r.totalWidth)
+    }
+
+    /// Diagnostic for the clip-detection probe:
+    ///   defaults write com.local.SpotifyMenuBar debugLayout -bool YES
+    /// Which of these fields actually moves when macOS clips a status item is not
+    /// documented; this is how we find out.
+    func logLayout(_ r: BarLayout.Resolution, requested: CGFloat) {
+        guard UserDefaults.standard.bool(forKey: "debugLayout") else { return }
+        let w = statusItem.button?.window
+        NSLog("[layout] rung=%@ text=%@ requested=%.1f length=%.1f region=%@ visible=%@ windowFrame=%@",
+              String(describing: r.rung), r.labelText ?? "-", requested, statusItem.length,
+              NSStringFromRect(currentRegion()), statusItem.isVisible ? "Y" : "N",
+              w.map { NSStringFromRect($0.frame) } ?? "nil")
     }
 
     /// Recompute the rung for the current track and apply it.
