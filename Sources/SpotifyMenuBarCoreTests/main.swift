@@ -175,7 +175,10 @@ expect(DisplayMode.from("compact"), .compact, "a known raw value parses")
 expect(DisplayMode.from("nonsense"), .auto, "an unknown value falls back to auto")
 expect(DisplayMode.from(nil), .auto, "a missing value falls back to auto")
 expect(DisplayMode.auto.pinnedRung, nil, "auto pins nothing")
+expect(DisplayMode.full.pinnedRung, .full, "full pins the full rung")
+expect(DisplayMode.compact.pinnedRung, .compact, "compact pins the compact rung")
 expect(DisplayMode.icons.pinnedRung, .icons, "icons pins the icons rung")
+expect(DisplayMode.playPause.pinnedRung, .playPause, "playPause pins the playPause rung")
 expect(DisplayMode.allCases.count, 5, "auto plus one mode per rung")
 
 d.set("icons", forKey: "displayMode")
@@ -184,5 +187,28 @@ d.set("garbage", forKey: "displayMode")
 expect(Settings.displayMode(d), .auto, "a garbage displayMode reads as auto")
 d.removeObject(forKey: "displayMode")
 expect(Settings.displayMode(d), .auto, "unset displayMode is auto")
+
+// MARK: BarLayout.pin
+
+// A user pin must honour the empty-artist collapse exactly as the automatic path does —
+// a second label composer is how "Advertisement – " shipped once already.
+expect(BarLayout.pin(.full, track: "Advertisement", artist: "", settings: st,
+                     metrics: m, measure: measure).labelText,
+       "Advertisement", "a pinned full rung collapses an empty artist")
+expect(BarLayout.pin(.full, track: "Bohemian Rhapsody", artist: "Queen", settings: st,
+                     metrics: m, measure: measure).labelText,
+       "Bohemian Rhapsody – Queen", "a pinned full rung keeps a present artist")
+expect(BarLayout.pin(.compact, track: "Bohemian Rhapsody", artist: "Queen", settings: st,
+                     metrics: m, measure: measure).labelText,
+       "Bohemian Rhapsody", "a pinned compact rung drops the artist")
+expect(BarLayout.pin(.icons, track: "Bohemian Rhapsody", artist: "Queen", settings: st,
+                     metrics: m, measure: measure).labelText,
+       nil, "a pinned iconic rung carries no label")
+expectClose(Double(BarLayout.pin(.playPause, track: "Bohemian Rhapsody", artist: "Queen",
+                                 settings: st, metrics: m, measure: measure).totalWidth),
+            24, "a pinned playPause rung is just its chrome")
+expect(BarLayout.pin(.full, track: "Bohemian Rhapsody", artist: "Queen", settings: st,
+                     metrics: m, measure: measure).rung,
+       .full, "pin returns the rung it was asked for")
 
 summarize()

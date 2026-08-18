@@ -68,6 +68,17 @@ public struct BarLayout {
         return nil
     }
 
+    /// The single place a label string is composed. Both the automatic path and a user
+    /// pin route through here, so the empty-artist collapse cannot be reimplemented
+    /// incorrectly at a second site — which is exactly how a stranded "Track – " once
+    /// shipped.
+    static func labelText(for rung: Rung, track: String, artist: String,
+                          settings: Settings) -> String {
+        let trackOnly = trunc(track, settings.maxTrack)
+        guard rung == .full, !artist.isEmpty else { return trackOnly }
+        return "\(trackOnly) – \(trunc(artist, settings.maxArtist))"
+    }
+
     /// Walk the ladder top-down and return the first rung that fits.
     ///
     /// `full` is chosen only when the preferred string fits *without* pixel
@@ -81,11 +92,6 @@ public struct BarLayout {
                                settings: Settings, metrics: Rung.Metrics,
                                measure: (String) -> CGFloat) -> Resolution {
         let trackOnly = trunc(track, settings.maxTrack)
-        // Spotify reports an empty artist for ads and untagged local files; an
-        // unconditional separator would render a stranded "Track – ".
-        let labelled = artist.isEmpty
-            ? trackOnly
-            : "\(trackOnly) – \(trunc(artist, settings.maxArtist))"
 
         for rung in Rung.allCases {
             let chrome = rung.chromeWidth(metrics)
@@ -102,7 +108,7 @@ public struct BarLayout {
             let labelBudget = budget - chrome
             guard labelBudget >= metrics.minLabelWidth else { continue }
 
-            let preferred = rung == .full ? labelled : trackOnly
+            let preferred = labelText(for: rung, track: track, artist: artist, settings: settings)
             if measure(preferred) <= labelBudget {
                 return Resolution(rung: rung, labelText: preferred,
                                   totalWidth: chrome + measure(preferred))
@@ -119,5 +125,18 @@ public struct BarLayout {
         // a guarantee, so state it rather than rely on the loop's shape.
         return Resolution(rung: .playPause, labelText: nil,
                           totalWidth: Rung.playPause.chromeWidth(metrics))
+    }
+
+    /// Re-render at a rung the user pinned explicitly, skipping the budget entirely.
+    /// The result may exceed the budget: that is the point of an override, and
+    /// `resize(to:)` still clamps the request to `totalWidth`.
+    public static func pin(_ rung: Rung, track: String, artist: String,
+                           settings: Settings, metrics: Rung.Metrics,
+                           measure: (String) -> CGFloat) -> Resolution {
+        let text = rung.showsLabel
+            ? labelText(for: rung, track: track, artist: artist, settings: settings)
+            : nil
+        return Resolution(rung: rung, labelText: text,
+                          totalWidth: rung.chromeWidth(metrics) + (text.map(measure) ?? 0))
     }
 }

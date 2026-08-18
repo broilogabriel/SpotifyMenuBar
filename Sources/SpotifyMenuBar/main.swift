@@ -202,6 +202,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         loginItem.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
         let current = Settings.displayMode()
+        // displayMenu never gets its own delegate, so this only ever runs for the root
+        // menu and `item(withTitle:)` never misses in practice. The `?? []` stays anyway —
+        // cheap, and still correct if a delegate is ever attached to the submenu too.
         for item in menu.item(withTitle: "Display")?.submenu?.items ?? [] {
             item.state = (item.representedObject as? String) == current.rawValue ? .on : .off
         }
@@ -308,11 +311,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                                 settings: Settings.current(), metrics: metrics,
                                                 measure: measureLabel)
             if let pinned, pinned != placeholder.rung {
-                placeholder = BarLayout.Resolution(
-                    rung: pinned,
-                    labelText: pinned.showsLabel ? "♪" : nil,
-                    totalWidth: pinned.chromeWidth(metrics)
-                        + (pinned.showsLabel ? measureLabel("♪") : 0))
+                placeholder = BarLayout.pin(pinned, track: "♪", artist: "",
+                                            settings: Settings.current(), metrics: metrics,
+                                            measure: measureLabel)
             }
             apply(placeholder, fullTitle: nil)
             return
@@ -323,19 +324,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let fraction = Settings.maxWidthFraction()
         let budget = BarLayout.budget(regionWidth: currentRegion().width,
                                       fraction: fraction, metrics: metrics)
-        let baseResolved = BarLayout.resolve(track: track, artist: artist, budget: budget,
-                                            settings: settings, metrics: metrics,
-                                            measure: measureLabel)
-        var resolved = baseResolved
+        var resolved = BarLayout.resolve(track: track, artist: artist, budget: budget,
+                                        settings: settings, metrics: metrics,
+                                        measure: measureLabel)
         if let pinned, pinned != resolved.rung {
-            let preferred = pinned == .full
-                ? "\(trunc(track, settings.maxTrack)) – \(trunc(artist, settings.maxArtist))"
-                : trunc(track, settings.maxTrack)
-            let text = pinned.showsLabel ? preferred : nil
-            resolved = BarLayout.Resolution(
-                rung: pinned,
-                labelText: text,
-                totalWidth: pinned.chromeWidth(metrics) + (text.map(measureLabel) ?? 0))
+            resolved = BarLayout.pin(pinned, track: track, artist: artist,
+                                     settings: settings, metrics: metrics,
+                                     measure: measureLabel)
         }
         // Ads and untagged local files report an empty artist; an unconditional
         // separator would render a stranded "Track – ".
