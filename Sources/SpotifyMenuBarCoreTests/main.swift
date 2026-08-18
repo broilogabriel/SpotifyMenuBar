@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import SpotifyMenuBarCore
 
@@ -41,5 +42,83 @@ expectClose(Double(Rung.full.chromeWidth(m)), 74, "full chrome is 74pt")
 expectClose(Double(Rung.compact.chromeWidth(m)), 74, "compact chrome is 74pt")
 expectClose(Double(Rung.icons.chromeWidth(m)), 68, "icons chrome is 68pt")
 expectClose(Double(Rung.playPause.chromeWidth(m)), 24, "playPause chrome is 24pt")
+
+// MARK: BarLayout
+
+// A stub measurer: 7pt per character. Keeps every check font-independent.
+let measure: (String) -> CGFloat = { CGFloat($0.count) * 7 }
+let notched = CGRect(x: 956, y: 1085, width: 772, height: 32)
+let screen = CGRect(x: 0, y: 0, width: 1728, height: 1117)
+
+// -- region: notch present, absent (nil), and absent (empty rect)
+expectClose(Double(BarLayout.region(auxiliaryTopRight: notched, screenFrame: screen).width),
+            772, "notched region uses the aux area width")
+expectClose(Double(BarLayout.region(auxiliaryTopRight: nil, screenFrame: screen).width),
+            864, "nil aux area falls back to the right half")
+expectClose(Double(BarLayout.region(auxiliaryTopRight: .zero, screenFrame: screen).width),
+            864, "empty aux area falls back to the right half")
+expectClose(Double(BarLayout.region(auxiliaryTopRight: nil, screenFrame: screen).minX),
+            864, "the right-half fallback starts at the screen midpoint")
+
+// -- budget: the fraction, and both clamps
+expectClose(Double(BarLayout.budget(regionWidth: 772, fraction: 0.25, metrics: m)),
+            193, "budget is fraction * region")
+expectClose(Double(BarLayout.budget(regionWidth: 0, fraction: 0.25, metrics: m)),
+            24, "a zero-width region still yields the playPause floor")
+expectClose(Double(BarLayout.budget(regionWidth: 100, fraction: 4.0, metrics: m)),
+            100, "budget never exceeds the region itself")
+
+// -- ellipsisFit
+expect(BarLayout.ellipsisFit("Bohemian Rhapsody", 70, measure), "Bohemian\u{2026}",
+       "ellipsisFit shrinks to fit the budget")
+expect(BarLayout.ellipsisFit("Queen", 70, measure), "Queen",
+       "ellipsisFit leaves an already-fitting string alone")
+expect(BarLayout.ellipsisFit("Bohemian Rhapsody", 6, measure), nil,
+       "ellipsisFit gives up when even one char plus ellipsis overflows")
+
+// -- resolve: the full ladder, same track at shrinking budgets
+let st = Settings(maxTrack: 18, maxArtist: 18, prevRestartSecs: 3)
+
+// "Bohemian Rhapsody" is 17 chars, so maxTrack of 18 leaves it whole.
+// labelled = "Bohemian Rhapsody – Queen" = 25 chars = 175pt; + 74 chrome = 249 <= 300.
+let r1 = BarLayout.resolve(track: "Bohemian Rhapsody", artist: "Queen", budget: 300,
+                           settings: st, metrics: m, measure: measure)
+expect(r1.rung, .full, "a roomy budget resolves to full")
+expect(r1.labelText, "Bohemian Rhapsody – Queen", "full shows track and artist")
+expectClose(Double(r1.totalWidth), 249, "full total width is chrome plus text")
+
+// 193 - 74 = 119 label budget. labelled is 175 > 119, so the artist is dropped;
+// trackOnly "Bohemian Rhapsody" is 17 chars = 119 <= 119, so it survives intact.
+let r2 = BarLayout.resolve(track: "Bohemian Rhapsody", artist: "Queen", budget: 193,
+                           settings: st, metrics: m, measure: measure)
+expect(r2.rung, .compact, "a tight budget drops the artist first")
+expect(r2.labelText, "Bohemian Rhapsody", "compact shows the track only")
+
+// 74 + 40 = 114 is the smallest budget that can still hold a legible label.
+// labelBudget = 46; trackOnly is 119, so this is the pixel-truncating path.
+let r3 = BarLayout.resolve(track: "Bohemian Rhapsody", artist: "Queen", budget: 120,
+                           settings: st, metrics: m, measure: measure)
+expect(r3.rung, .compact, "just above the label floor still keeps a label")
+expect(r3.labelText, "Bohem…", "the last labelled rung truncates by pixels")
+
+let r4 = BarLayout.resolve(track: "Bohemian Rhapsody", artist: "Queen", budget: 100,
+                           settings: st, metrics: m, measure: measure)
+expect(r4.rung, .icons, "below the label floor drops to icons")
+expect(r4.labelText, nil, "icons carries no label text")
+expectClose(Double(r4.totalWidth), 68, "icons total width is its chrome")
+
+let r5 = BarLayout.resolve(track: "Bohemian Rhapsody", artist: "Queen", budget: 30,
+                           settings: st, metrics: m, measure: measure)
+expect(r5.rung, .playPause, "too narrow for three icons drops to playPause")
+
+let r6 = BarLayout.resolve(track: "Bohemian Rhapsody", artist: "Queen", budget: 0,
+                           settings: st, metrics: m, measure: measure)
+expect(r6.rung, .playPause, "a zero budget still renders the floor, never nothing")
+
+// -- resolve respects the user's character preferences as an upper bound
+let short = Settings(maxTrack: 5, maxArtist: 5, prevRestartSecs: 3)
+let r7 = BarLayout.resolve(track: "Bohemian Rhapsody", artist: "Queen", budget: 300,
+                           settings: short, metrics: m, measure: measure)
+expect(r7.labelText, "Bohe… – Queen", "maxTrack still caps the text when pixels allow more")
 
 summarize()
