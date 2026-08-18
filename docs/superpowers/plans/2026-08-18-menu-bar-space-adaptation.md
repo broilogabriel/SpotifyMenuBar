@@ -1087,33 +1087,49 @@ Expected: PASS — `56/56 checks passed`, exit 0.
 
 - [ ] **Step 6: Honour the pin in `relayout`**
 
-In `relayout(track:artist:)`, after computing `resolved` and before building `fullTitle`, add:
+The pin must apply on **both** paths through `relayout` — including the empty-track
+placeholder path, which `return`s early. So resolve the pin once, near the top, before the
+empty-track guard.
+
+Insert immediately after the `lastTrack = (track, artist)` line added in Task 5, and
+before the `guard !track.isEmpty else { … }` block:
 
 ```swift
-        // A pinned rung skips the budget entirely — that is the point of the override.
-        var resolved = resolved
-        if let pinned = Settings.displayMode().pinnedRung, pinned != resolved.rung {
-            let chrome = pinned.chromeWidth(metrics)
-            let text = pinned.showsLabel
-                ? BarLayout.ellipsisFit(trunc(track, settings.maxTrack), .greatestFiniteMagnitude, measureLabel)
-                : nil
-            resolved = BarLayout.Resolution(
-                rung: pinned,
-                labelText: text,
-                totalWidth: chrome + (text.map(measureLabel) ?? 0))
-        }
+        // A pinned rung skips the budget entirely — that is the point of the override —
+        // and it has to win on the placeholder path too, which returns early below.
+        let pinned = Settings.displayMode().pinnedRung
 ```
 
-Change `let resolved = BarLayout.resolve(...)` to `let baseResolved = BarLayout.resolve(...)` and `var resolved = baseResolved` accordingly so the shadowing above compiles.
-
-For the pinned `.full` rung the label should include the artist; use this instead of the `text` line above:
+Then, inside the empty-track guard, replace the computed `let rung: Rung = …` line with:
 
 ```swift
+            let rung: Rung = pinned ?? (budget >= Rung.icons.chromeWidth(metrics) + metrics.minLabelWidth
+                ? .compact : (budget >= Rung.icons.chromeWidth(metrics) ? .icons : .playPause))
+```
+
+And on the normal path, after `let resolved = BarLayout.resolve(...)`, override it when a
+pin is set. Rename the resolver's result so the override reads clearly — there is exactly
+one mechanism here, not two:
+
+```swift
+        let baseResolved = BarLayout.resolve(track: track, artist: artist, budget: budget,
+                                            settings: settings, metrics: metrics,
+                                            measure: measureLabel)
+        var resolved = baseResolved
+        if let pinned, pinned != resolved.rung {
             let preferred = pinned == .full
                 ? "\(trunc(track, settings.maxTrack)) – \(trunc(artist, settings.maxArtist))"
                 : trunc(track, settings.maxTrack)
             let text = pinned.showsLabel ? preferred : nil
+            resolved = BarLayout.Resolution(
+                rung: pinned,
+                labelText: text,
+                totalWidth: pinned.chromeWidth(metrics) + (text.map(measureLabel) ?? 0))
+        }
 ```
+
+A pinned rung is deliberately allowed to exceed the budget — the user asked for it
+explicitly, and `resize(to:)` still clamps the request to `resolved.totalWidth`.
 
 - [ ] **Step 7: Build the submenu**
 
