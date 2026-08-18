@@ -26,6 +26,7 @@
 - Derived chrome widths, used throughout: `full`/`compact` = **74pt**, `icons` = **68pt**, `playPause` = **24pt**.
 - Build command and expected output: `swift build` → `Build complete!`. A failure prints `error:` lines.
 - **Core files that touch `CGRect`/`CGFloat` must `import CoreGraphics`.** `import Foundation` alone does not expose `CGRect.width`/`.midX` or `CGRect(x:y:width:height:)` — verified 2026-08-18, it fails with `value of type 'CGRect' has no member 'width'`.
+- **Check counts include Task 3's fix round**, which added 9 checks (44 -> 53) for the ladder boundary pairs, the floor-overflow pin, the `ellipsisFit`-returns-nil branch, and the NaN guard. Every later count in this plan is stated post-fix.
 - Every expected label string, width and check count in this plan was produced by running a prototype of `Rung` + `BarLayout` against the 7pt-per-character stub measurer, not derived by hand. If a check fails, suspect the implementation before the expectation.
 
 ---
@@ -857,8 +858,9 @@ Replace `reset()` (`main.swift:201-206`) and `update(track:artist:state:)` (`mai
 
 Spotify reports an **empty artist** for ads and for untagged local files. Left alone that
 renders `"Advertisement – "` with a stranded dash. Guard it in `relayout` where the two
-title strings are built — add this right after the `lastTrack` line, and use `subtitle` in
-place of `artist` for both the `BarLayout.resolve` call and `fullTitle`:
+title strings are built — add this as the **first line of `relayout`** (Task 5 later adds a
+`lastTrack` line above it), and use `subtitle` in place of `artist` for both the
+`BarLayout.resolve` call and `fullTitle`:
 
 ```swift
         // Ads and untagged local files report an empty artist; passing it through would
@@ -903,7 +905,7 @@ Run: `swift build`
 Expected: `Build complete!`
 
 Run: `swift run SpotifyMenuBarCoreTests`
-Expected: PASS — `47/47 checks passed`, exit 0.
+Expected: PASS — `56/56 checks passed`, exit 0.
 
 - [ ] **Step 9: Human verification — this is the first point the bug is actually fixed**
 
@@ -989,7 +991,7 @@ Run: `swift build`
 Expected: `Build complete!`
 
 Run: `swift run SpotifyMenuBarCoreTests`
-Expected: PASS — `47/47 checks passed`, exit 0.
+Expected: PASS — `56/56 checks passed`, exit 0.
 
 - [ ] **Step 5: Human verification**
 
@@ -1105,7 +1107,7 @@ Append to `Settings` in `Sources/SpotifyMenuBarCore/Settings.swift`:
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `swift run SpotifyMenuBarCoreTests`
-Expected: PASS — `56/56 checks passed`, exit 0.
+Expected: PASS — `65/65 checks passed`, exit 0.
 
 - [ ] **Step 6: Honour the pin in `relayout`**
 
@@ -1201,7 +1203,7 @@ Run: `swift build`
 Expected: `Build complete!`
 
 Run: `swift run SpotifyMenuBarCoreTests`
-Expected: PASS — `56/56 checks passed`, exit 0.
+Expected: PASS — `65/65 checks passed`, exit 0.
 
 - [ ] **Step 9: Human verification**
 
@@ -1322,7 +1324,7 @@ Run: `swift build`
 Expected: `Build complete!`
 
 Run: `swift run SpotifyMenuBarCoreTests`
-Expected: PASS — `56/56 checks passed`, exit 0.
+Expected: PASS — `65/65 checks passed`, exit 0.
 
 - [ ] **Step 6: Human verification**
 
@@ -1418,7 +1420,7 @@ Run: `grep -n "single file\|no test suite\|~130 lines" AGENTS.md CLAUDE.md READM
 Expected: no hits that still claim a single-file app or an absent test suite. Fix any that remain.
 
 Run: `swift build && swift run SpotifyMenuBarCoreTests`
-Expected: `Build complete!` and `56/56 checks passed`.
+Expected: `Build complete!` and `65/65 checks passed`.
 
 - [ ] **Step 5: Commit**
 
