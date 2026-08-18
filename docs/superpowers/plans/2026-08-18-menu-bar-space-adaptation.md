@@ -1238,7 +1238,7 @@ The one part of the design resting on an unverified assumption. **Everything abo
 - Modify: `Sources/SpotifyMenuBarCore/BarLayout.swift` (only if the probe shows the region's `minX` is needed in pure form)
 
 **Interfaces:**
-- Consumes: `apply`, `relayout`, `currentRegion` (Tasks 4–5).
+- Consumes: `apply`, `relayout`, `currentRegion`, `lastTrack` (Tasks 4–5), and `BarLayout.pin(_:track:artist:settings:metrics:measure:)` (added by Task 6's fix round — it is the single label composer, so the demotion path must not compose its own strings).
 - Produces: `enum Clip { case clipped, notClipped, unknown }`; `func clipVerdict() -> Clip`; `func applyWithFeedback(_ r: BarLayout.Resolution, fullTitle: String?)`
 
 - [ ] **Step 1: Add the diagnostic log**
@@ -1323,11 +1323,16 @@ Add to `AppDelegate`:
             guard let self else { return }
             guard case .clipped = self.clipVerdict(),
                   let down = r.rung.next else { return }
-            let chrome = down.chromeWidth(Rung.Metrics.default)
+            // Re-render at the lower rung through the same composer the automatic and
+            // pinned paths use. Carrying `r`'s own labelText/totalWidth down would keep
+            // full's artist text and full's width at the compact rung — the demotion
+            // would shrink nothing and the loop would just fall to the floor.
+            let track = self.lastTrack.track.isEmpty ? "♪" : self.lastTrack.track
             self.applyWithFeedback(
-                BarLayout.Resolution(rung: down,
-                                     labelText: down.showsLabel ? r.labelText : nil,
-                                     totalWidth: down.showsLabel ? r.totalWidth : chrome),
+                BarLayout.pin(down, track: track, artist: self.lastTrack.artist,
+                              settings: Settings.current(),
+                              metrics: Rung.Metrics.default,
+                              measure: self.measureLabel),
                 fullTitle: fullTitle)
         }
     }
