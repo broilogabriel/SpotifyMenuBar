@@ -144,6 +144,21 @@ When writing review comments (PR reviews, inline comments), follow
   non-obvious choice exists (usually a bug it prevents), not *what* the code does.
 - Keep it a single file unless it grows substantially.
 
+## Design docs (`docs/superpowers/`)
+
+Specs and implementation plans produced by the superpowers skills live here and are
+**versioned — tracked in git and committed** alongside the code they describe. They are
+the record of why a change looks the way it does; a design that only exists in a
+transcript is lost.
+
+- Specs → `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`
+- Plans → `docs/superpowers/plans/YYYY-MM-DD-<topic>.md`
+
+**Do not add a `.gitignore` under `docs/superpowers/`.** Some global agent configs default
+to making these artifacts local-only; that default does not apply to this repo. If you find
+one there, it is a mistake — remove it rather than working around it. When a skill says to
+commit the spec, do it for real.
+
 ## Packaging (`build-app.sh`)
 
 - `build-app.sh` does a release build, assembles `SpotifyMenuBar.app` from the
