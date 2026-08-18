@@ -26,7 +26,7 @@
 - Derived chrome widths, used throughout: `full`/`compact` = **74pt**, `icons` = **68pt**, `playPause` = **24pt**.
 - Build command and expected output: `swift build` → `Build complete!`. A failure prints `error:` lines.
 - **Core files that touch `CGRect`/`CGFloat` must `import CoreGraphics`.** `import Foundation` alone does not expose `CGRect.width`/`.midX` or `CGRect(x:y:width:height:)` — verified 2026-08-18, it fails with `value of type 'CGRect' has no member 'width'`.
-- **Check counts include Task 3's fix round**, which added 9 checks (44 -> 53) for the ladder boundary pairs, the floor-overflow pin, the `ellipsisFit`-returns-nil branch, and the NaN guard. Every later count in this plan is stated post-fix.
+- **Check counts include the Task 3 and Task 4 fix rounds**, which added 9 and 2 checks respectively (44 -> 53, then 56 -> 58 in Task 4) for the ladder boundary pairs, the floor-overflow pin, the `ellipsisFit`-returns-nil branch, and the NaN guard. Every later count in this plan is stated post-fix.
 - Every expected label string, width and check count in this plan was produced by running a prototype of `Rung` + `BarLayout` against the 7pt-per-character stub measurer, not derived by hand. If a check fails, suspect the implementation before the expectation.
 
 ---
@@ -1107,7 +1107,7 @@ Append to `Settings` in `Sources/SpotifyMenuBarCore/Settings.swift`:
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `swift run SpotifyMenuBarCoreTests`
-Expected: PASS — `65/65 checks passed`, exit 0.
+Expected: PASS — `67/67 checks passed`, exit 0.
 
 - [ ] **Step 6: Honour the pin in `relayout`**
 
@@ -1214,7 +1214,7 @@ Run: `swift build`
 Expected: `Build complete!`
 
 Run: `swift run SpotifyMenuBarCoreTests`
-Expected: PASS — `65/65 checks passed`, exit 0.
+Expected: PASS — `67/67 checks passed`, exit 0.
 
 - [ ] **Step 9: Human verification**
 
@@ -1346,7 +1346,7 @@ Run: `swift build`
 Expected: `Build complete!`
 
 Run: `swift run SpotifyMenuBarCoreTests`
-Expected: PASS — `65/65 checks passed`, exit 0.
+Expected: PASS — `67/67 checks passed`, exit 0.
 
 - [ ] **Step 6: Human verification**
 
@@ -1442,7 +1442,7 @@ Run: `grep -n "single file\|no test suite\|~130 lines" AGENTS.md CLAUDE.md READM
 Expected: no hits that still claim a single-file app or an absent test suite. Fix any that remain.
 
 Run: `swift build && swift run SpotifyMenuBarCoreTests`
-Expected: `Build complete!` and `65/65 checks passed`.
+Expected: `Build complete!` and `67/67 checks passed`.
 
 - [ ] **Step 5: Commit**
 
