@@ -97,6 +97,9 @@ func summarize() -> Never {
 Create `Sources/SpotifyMenuBarCoreTests/main.swift`:
 
 ```swift
+// Foundation is needed for UserDefaults — Swift does not re-export a
+// dependency module's own imports, so importing Core is not enough.
+import Foundation
 import SpotifyMenuBarCore
 
 // trunc keeps short strings whole and ellipsises long ones to exactly n characters.
