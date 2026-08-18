@@ -1239,7 +1239,7 @@ The one part of the design resting on an unverified assumption. **Everything abo
 
 **Interfaces:**
 - Consumes: `apply`, `relayout`, `currentRegion` (Tasks 4–5).
-- Produces: `enum Clip { case clipped, notClipped, unknown }`; `func clipVerdict(requested: CGFloat) -> Clip`; `func applyWithFeedback(_ r: BarLayout.Resolution, fullTitle: String?)`
+- Produces: `enum Clip { case clipped, notClipped, unknown }`; `func clipVerdict() -> Clip`; `func applyWithFeedback(_ r: BarLayout.Resolution, fullTitle: String?)`
 
 - [ ] **Step 1: Add the diagnostic log**
 
@@ -1289,10 +1289,16 @@ Add to `AppDelegate`. Enable only the predicates the probe actually confirmed �
 
     /// Three-state on purpose: `.unknown` means "no usable signal", and the caller
     /// then trusts the computed budget alone. The feature must work either way.
-    func clipVerdict(requested: CGFloat) -> Clip {
+    ///
+    /// Compares against `statusItem.length` — what we actually asked macOS for — and
+    /// NOT against `Resolution.totalWidth`. Those differ by design: `resize(to:)`
+    /// clamps the request to `min(fittingSize + padding, totalWidth)`, so at labelled
+    /// rungs the length we set is *below* `totalWidth`. Comparing to `totalWidth`
+    /// would read "clipped" on every healthy call and demote a rung on every refresh.
+    func clipVerdict() -> Clip {
         guard let window = statusItem.button?.window, window.screen != nil else { return .unknown }
         if !statusItem.isVisible { return .clipped }
-        if window.frame.width + 0.5 < requested { return .clipped }
+        if window.frame.width + 0.5 < statusItem.length { return .clipped }
         if window.frame.minX < currentRegion().minX - 0.5 { return .clipped }
         return .notClipped
     }
@@ -1315,7 +1321,7 @@ Add to `AppDelegate`:
         // The window frame only reflects the new length after the runloop turn.
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            guard case .clipped = self.clipVerdict(requested: r.totalWidth),
+            guard case .clipped = self.clipVerdict(),
                   let down = r.rung.next else { return }
             let chrome = down.chromeWidth(Rung.Metrics.default)
             self.applyWithFeedback(
@@ -1327,7 +1333,12 @@ Add to `AppDelegate`:
     }
 ```
 
-Change the two `apply(resolved, fullTitle: fullTitle)` call sites in `relayout` to `applyWithFeedback(resolved, fullTitle: fullTitle)`.
+Route **both** of `relayout`'s paths through the feedback wrapper instead of `apply`:
+the normal path's `apply(resolved, fullTitle: fullTitle)` becomes
+`applyWithFeedback(resolved, fullTitle: fullTitle)`, and the empty-track guard's
+`apply(placeholder, fullTitle: nil)` becomes `applyWithFeedback(placeholder, fullTitle: nil)`.
+(After Task 4's fix round and Task 6 the two calls no longer share a spelling, so match
+them by path, not by text.)
 
 - [ ] **Step 5: Verify build and tests**
 
