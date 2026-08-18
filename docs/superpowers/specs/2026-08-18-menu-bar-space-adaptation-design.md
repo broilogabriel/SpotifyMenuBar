@@ -45,10 +45,15 @@ problems.
 ### 1. Budget — pure function of screen geometry
 
 ```
-region = screen.auxiliaryTopRightArea, if non-empty      // notched: 772pt here
-       | right half of screen.frame, otherwise           // non-notched external display
-budget = clamp(region.width × maxWidthFraction, low: width(.playPause), high: region.width)
+region = screen.auxiliaryTopRightArea, if non-nil AND width > 0   // notched: 772pt here
+       | right half of screen.frame, otherwise                    // non-notched display
+budget = clamp(region.width × maxWidthFraction, low: chrome(.playPause), high: region.width)
 ```
+
+**Verified 2026-08-18:** Swift imports `auxiliaryTopRightArea` as **`NSRect?`**, even though
+the ObjC header declares it non-optional `NSRect`. "No notch" is therefore signalled by
+*either* nil *or* an empty rect, and both must be handled — checking only `.isEmpty` will
+not compile.
 
 `screen` is the display owning the status button's window, not `NSScreen.main`, so docking
 to an external monitor recomputes the budget.
@@ -184,15 +189,23 @@ SwiftPM cannot test an executable target, so the pure core moves to a library:
 
 ```
 Package.swift
-├── SpotifyMenuBarCore   (library)     Config, Settings, trunc, Rung, DisplayMode, BarLayout
-├── SpotifyMenuBar       (executable)  main.swift — AppKit only, depends on Core
-└── Tests/SpotifyMenuBarCoreTests      BarLayoutTests
+├── Sources/SpotifyMenuBarCore       (library)     Config, Settings, trunc, Rung,
+│                                                  DisplayMode, BarLayout
+├── Sources/SpotifyMenuBar           (executable)  main.swift — AppKit only, → Core
+└── Sources/SpotifyMenuBarCoreTests  (executable)  Harness.swift + main.swift, → Core
 ```
 
-- **`swift-tools-version` stays at 5.9 and tests use XCTest.** Bumping to 6.0 for
-  swift-testing would also switch the package to Swift 6 language mode, whose strict
-  concurrency checking would ripple into the AppKit code (`@MainActor`, `Sendable` on
-  `SpotifyClient`). Out of scope.
+- **`swift-tools-version` stays at 5.9.** Bumping to 6.0 would also switch the package to
+  Swift 6 language mode, whose strict concurrency checking would ripple into the AppKit
+  code (`@MainActor`, `Sendable` on `SpotifyClient`). Out of scope.
+- **Tests are a plain executable, not a `.testTarget`.** Verified 2026-08-18: this machine
+  has no Xcode (`xcode-select -p` → `/Library/Developer/CommandLineTools`), and the Command
+  Line Tools toolchain ships **neither `XCTest` nor swift-testing's `Testing` module** —
+  both fail with `no such module`, so a `.testTarget` cannot compile here at all and
+  `swift test` is unavailable. Instead `SpotifyMenuBarCoreTests` is an
+  `.executableTarget` under `Sources/` with a ~30-line `expect`/`summarize` harness that
+  exits non-zero on failure. Run with `swift run SpotifyMenuBarCoreTests`. This keeps the
+  "no third-party dependencies" rule intact and needs no Xcode install.
 - `Settings.current(_ defaults: UserDefaults = .standard)` gains the parameter so tests
   can inject a suite.
 - `build-app.sh` copies `.build/release/SpotifyMenuBar`; the executable name does not
@@ -248,7 +261,7 @@ Every condition resolves to a rung, never to an exception.
 
 | What | How |
 |---|---|
-| `BarLayout` arithmetic — fraction math, notch fallback, rung selection, `ellipsisFit`, clamps | `swift test`, XCTest, with a stub measuring closure so tests are font-independent |
+| `BarLayout` arithmetic — fraction math, notch fallback, rung selection, `ellipsisFit`, clamps | `swift run SpotifyMenuBarCoreTests` (exit 0 = pass), with a stub measuring closure so checks are font-independent |
 | Compiles | `swift build` |
 | Bundle still assembles and runs | `./build-app.sh`, then launch the `.app` |
 | Clip detection signal | manual probe on a crowded bar (task 1 of the plan) — needs the human |
