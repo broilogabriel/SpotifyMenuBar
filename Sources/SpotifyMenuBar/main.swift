@@ -1,40 +1,6 @@
 import AppKit
 import ServiceManagement
-
-// MARK: - Config
-
-/// Compile-time defaults. Runtime overrides come from `Settings` (UserDefaults).
-enum Config {
-    static let maxTrack = 18
-    static let maxArtist = 18
-    static let prevRestartSecs = 3.0   // within this many secs, "back" goes to the previous track; later it restarts
-    static let buttonWidth: CGFloat = 16
-    static let stackSpacing: CGFloat = 6
-}
-
-/// Runtime-overridable tunables. Read fresh on every refresh so `defaults write`
-/// takes effect on the next playback change — no restart. Values are clamped so a
-/// bad write can't break layout.
-struct Settings {
-    let maxTrack: Int
-    let maxArtist: Int
-    let prevRestartSecs: Double
-
-    static func current() -> Settings {
-        let d = UserDefaults.standard
-        func int(_ key: String, _ fallback: Int) -> Int {
-            max(1, d.object(forKey: key) as? Int ?? fallback)
-        }
-        return Settings(
-            maxTrack: int("maxTrack", Config.maxTrack),
-            maxArtist: int("maxArtist", Config.maxArtist),
-            prevRestartSecs: max(0, d.object(forKey: "prevRestartSecs") as? Double ?? Config.prevRestartSecs))
-    }
-}
-
-func trunc(_ s: String, _ n: Int) -> String {
-    s.count <= n ? s : String(s.prefix(n - 1)) + "…"
-}
+import SpotifyMenuBarCore
 
 // MARK: - Spotify control
 
