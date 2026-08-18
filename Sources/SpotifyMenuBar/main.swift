@@ -50,6 +50,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Remembered so a momentarily screen-less window (early launch, display sleep)
     // reuses the last good geometry instead of collapsing to the floor.
     private var lastRegion = CGRect(x: 0, y: 0, width: 400, height: 24)
+    // Remembered so a display change can re-run layout without a round-trip to
+    // Spotify — an Apple Event on every screen-parameter notification would be
+    // both slow and needless.
+    private var lastTrack: (track: String, artist: String) = ("", "")
 
     func applicationDidFinishLaunching(_ n: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -109,6 +113,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self, selector: #selector(changed),
             name: .init("com.spotify.client.PlaybackStateChanged"), object: nil)
 
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(screenChanged),
+            name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(screenChanged),
+            name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+
         refresh()
     }
 
@@ -152,6 +163,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let work = DispatchWorkItem { [weak self] in self?.refresh() }
         pendingRefresh = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: work)
+    }
+
+    /// Dock/undock, resolution change, or a Space switch can all change the region
+    /// this item has to fit into.
+    @objc func screenChanged() {
+        relayout(track: lastTrack.track, artist: lastTrack.artist)
     }
 
     // MARK: - Launch at login (SMAppService, macOS 13+)
@@ -255,6 +272,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Recompute the rung for the current track and apply it.
     func relayout(track: String, artist: String) {
+        lastTrack = (track, artist)
         guard !track.isEmpty else {
             let metrics = Rung.Metrics.default
             let budget = BarLayout.budget(regionWidth: currentRegion().width,
