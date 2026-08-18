@@ -964,7 +964,7 @@ Run: `swift build`
 Expected: `Build complete!`
 
 Run: `swift run SpotifyMenuBarCoreTests`
-Expected: PASS — `46/46 checks passed`, exit 0.
+Expected: PASS — `47/47 checks passed`, exit 0.
 
 - [ ] **Step 5: Human verification**
 
