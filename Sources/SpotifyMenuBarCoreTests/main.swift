@@ -160,4 +160,13 @@ expectClose(Settings.maxWidthFraction(d), 1.0, "an absurd fraction clamps down t
 d.removeObject(forKey: "maxWidthFraction")
 expectClose(Settings.maxWidthFraction(d), Config.maxWidthFraction, "unset uses the default")
 
+// MARK: resolve collapses an empty artist
+
+expect(BarLayout.resolve(track: "Advertisement", artist: "", budget: 300,
+                         settings: st, metrics: m, measure: measure).labelText,
+       "Advertisement", "an empty artist leaves no stranded separator")
+expect(BarLayout.resolve(track: "Advertisement", artist: "", budget: 300,
+                         settings: st, metrics: m, measure: measure).rung, .full,
+       "an empty artist still resolves to full when it fits")
+
 summarize()

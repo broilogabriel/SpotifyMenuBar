@@ -45,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var loginItem: NSMenuItem!
     var menuPrevItem: NSMenuItem!
     var menuNextItem: NSMenuItem!
+    var menuPrevNextSeparator: NSMenuItem!
     private var pendingRefresh: DispatchWorkItem?
     // Remembered so a momentarily screen-less window (early launch, display sleep)
     // reuses the last good geometry instead of collapsing to the floor.
@@ -91,7 +92,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menuNextItem.target = self
         menuNextItem.isHidden = true
         menu.addItem(menuNextItem)
-        menu.addItem(.separator())
+        menuPrevNextSeparator = .separator()
+        menuPrevNextSeparator.isHidden = true
+        menu.addItem(menuPrevNextSeparator)
         loginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLogin), keyEquivalent: "")
         loginItem.target = self
         menu.addItem(loginItem)
@@ -181,7 +184,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Spotify unavailable → placeholder.
     func reset() {
-        label.stringValue = "♪"
         playButton.image = NSImage(systemSymbolName: "play.fill", accessibilityDescription: "Play or pause")
         // An empty track name makes `relayout` produce the "♪" placeholder rung and
         // clears the tooltip, so the not-running state goes through one code path.
@@ -206,9 +208,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return lastRegion
     }
 
+    // Measured with a real NSTextField, not a bare NSString: the field's cell adds ~4pt
+    // of inset, and if the resolver's model disagrees with the label's the clamp in
+    // resize(to:) silently crops the first glyph.
+    private lazy var sizer: NSTextField = {
+        let f = NSTextField(labelWithString: "")
+        f.font = label.font
+        return f
+    }()
+
     /// Text measurement is AppKit-only, so `BarLayout` takes it as a closure.
     func measureLabel(_ s: String) -> CGFloat {
-        (s as NSString).size(withAttributes: [.font: label.font ?? NSFont.menuBarFont(ofSize: 0)]).width
+        sizer.stringValue = s
+        return ceil(sizer.fittingSize.width)
     }
 
     /// prev/next are unreachable at the playPause rung, so surface them in the
@@ -216,6 +228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func prevNextMenuItems(hidden: Bool) {
         menuPrevItem?.isHidden = hidden
         menuNextItem?.isHidden = hidden
+        menuPrevNextSeparator?.isHidden = hidden
     }
 
     /// Show exactly what this rung calls for. Hidden views leave the stack's layout,
@@ -243,34 +256,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Recompute the rung for the current track and apply it.
     func relayout(track: String, artist: String) {
         guard !track.isEmpty else {
-            label.stringValue = "♪"
             let metrics = Rung.Metrics.default
             let budget = BarLayout.budget(regionWidth: currentRegion().width,
                                           fraction: Settings.maxWidthFraction(),
                                           metrics: metrics)
-            // The placeholder is one glyph, so only the iconic rungs can be too wide.
-            let rung: Rung = budget >= Rung.icons.chromeWidth(metrics) + metrics.minLabelWidth
-                ? .compact : (budget >= Rung.icons.chromeWidth(metrics) ? .icons : .playPause)
-            apply(BarLayout.Resolution(rung: rung,
-                                       labelText: rung.showsLabel ? "♪" : nil,
-                                       totalWidth: budget),
+            // Route the placeholder through the same tested resolver rather than a
+            // second, hand-derived ladder that could drift from it.
+            apply(BarLayout.resolve(track: "♪", artist: "", budget: budget,
+                                    settings: Settings.current(), metrics: metrics,
+                                    measure: measureLabel),
                   fullTitle: nil)
             return
         }
-
-        // Ads and untagged local files report an empty artist; passing it through would
-        // render a stranded "Track – " dash.
-        let subtitle = artist.isEmpty ? "" : artist
 
         let settings = Settings.current()
         let metrics = Rung.Metrics.default
         let fraction = Settings.maxWidthFraction()
         let budget = BarLayout.budget(regionWidth: currentRegion().width,
                                       fraction: fraction, metrics: metrics)
-        let resolved = BarLayout.resolve(track: track, artist: subtitle, budget: budget,
+        let resolved = BarLayout.resolve(track: track, artist: artist, budget: budget,
                                          settings: settings, metrics: metrics,
                                          measure: measureLabel)
-        let fullTitle = track.isEmpty ? nil : (subtitle.isEmpty ? track : "\(track) – \(subtitle)")
+        // Ads and untagged local files report an empty artist; an unconditional
+        // separator would render a stranded "Track – ".
+        let fullTitle = artist.isEmpty ? track : "\(track) – \(artist)"
         apply(resolved, fullTitle: fullTitle)
     }
 

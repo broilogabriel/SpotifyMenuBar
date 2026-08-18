@@ -80,8 +80,12 @@ public struct BarLayout {
     public static func resolve(track: String, artist: String, budget: CGFloat,
                                settings: Settings, metrics: Rung.Metrics,
                                measure: (String) -> CGFloat) -> Resolution {
-        let labelled = "\(trunc(track, settings.maxTrack)) – \(trunc(artist, settings.maxArtist))"
         let trackOnly = trunc(track, settings.maxTrack)
+        // Spotify reports an empty artist for ads and untagged local files; an
+        // unconditional separator would render a stranded "Track – ".
+        let labelled = artist.isEmpty
+            ? trackOnly
+            : "\(trackOnly) – \(trunc(artist, settings.maxArtist))"
 
         for rung in Rung.allCases {
             let chrome = rung.chromeWidth(metrics)
