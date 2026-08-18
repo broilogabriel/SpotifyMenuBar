@@ -1370,7 +1370,7 @@ git commit -m "feat(menubar): step down a rung when macOS clips the item anyway"
 
 **Files:**
 - Modify: `AGENTS.md` — "Hard-won design decisions", "Conventions", "Build, run, verify"
-- Modify: `README.md` — the `Display` submenu and the two new defaults keys
+- Modify: `README.md` — the `Display` submenu and the `maxWidthFraction` / `displayMode` / `debugLayout` keys. Describe `debugLayout` as a diagnostic only; **do not document a clip-detection or auto-demotion feature**, it is not implemented (see decision 16)
 - Modify: `CLAUDE.md` — the single-file quick-reference line is now wrong
 
 - [ ] **Step 1: Add the new design decisions to `AGENTS.md`**
@@ -1386,11 +1386,21 @@ Append entries 14–17 to the "Hard-won design decisions — do not regress thes
 15. **The rung ladder has a floor.** `full → compact → icons → playPause`; the item
     always renders something. At `playPause` the dropped prev/next controls appear in
     the right-click menu, so no function becomes unreachable.
-16. **`clipVerdict` is deliberately three-state.** `.unknown` means macOS gave no
-    usable signal, and the caller then trusts the computed budget alone. Do not
-    collapse it to a Bool — the feature must work on machines where the signal is
-    absent.
-17. **Tooltip and `accessibilityLabel` carry the full title on the host button**, not
+16. **Clip detection is NOT implemented, on purpose.** macOS exposes no API for
+    remaining menu-bar space, and which observable field changes when it clips a status
+    item is undocumented. The shipped behavior is the computed ceiling alone, which the
+    design sanctions as a complete outcome. `debugLayout` is the instrumentation for
+    measuring it; the probe and the design for the corrective feedback loop live in
+    `docs/superpowers/specs/2026-08-18-menu-bar-space-adaptation-design.md`. If it is ever
+    built, `clipVerdict` must stay **three-state** — `.unknown` means "no usable signal",
+    and the caller then trusts the budget alone — and must compare the granted window
+    width against `statusItem.length`, never against `Resolution.totalWidth`, which
+    `resize(to:)` deliberately sets a few points below at labelled rungs.
+17. **`BarLayout.labelText(for:track:artist:settings:)` is the ONLY place a bar label
+    string is composed.** `resolve` and `pin` both route through it. An empty artist
+    (Spotify ads, untagged local files) must collapse to the track alone — a stranded
+    `"Track – "` shipped twice because a second composer existed. Do not add a third.
+18. **Tooltip and `accessibilityLabel` carry the full title on the host button**, not
     only on the label, because at `icons` and `playPause` the label is hidden and they
     become the only way to know what is playing. Setting them on the label alone
     silently breaks decision #12 at reduced rungs.
