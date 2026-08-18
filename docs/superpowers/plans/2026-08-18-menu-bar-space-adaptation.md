@@ -1124,11 +1124,22 @@ before the `guard !track.isEmpty else { … }` block:
         let pinned = Settings.displayMode().pinnedRung
 ```
 
-Then, inside the empty-track guard, replace the computed `let rung: Rung = …` line with:
+Then honour the pin **inside the empty-track guard too**. After Task 4's fix round that
+guard routes the placeholder through `BarLayout.resolve`, so override its result the same
+way the normal path does:
 
 ```swift
-            let rung: Rung = pinned ?? (budget >= Rung.icons.chromeWidth(metrics) + metrics.minLabelWidth
-                ? .compact : (budget >= Rung.icons.chromeWidth(metrics) ? .icons : .playPause))
+            var placeholder = BarLayout.resolve(track: "♪", artist: "", budget: budget,
+                                                settings: Settings.current(), metrics: metrics,
+                                                measure: measureLabel)
+            if let pinned, pinned != placeholder.rung {
+                placeholder = BarLayout.Resolution(
+                    rung: pinned,
+                    labelText: pinned.showsLabel ? "♪" : nil,
+                    totalWidth: pinned.chromeWidth(metrics)
+                        + (pinned.showsLabel ? measureLabel("♪") : 0))
+            }
+            apply(placeholder, fullTitle: nil)
 ```
 
 And on the normal path, after `let resolved = BarLayout.resolve(...)`, override it when a
