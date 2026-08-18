@@ -40,8 +40,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var stack: NSStackView!
     var label: NSTextField!
     var playButton: NSButton!
+    var prevButton: NSButton!
+    var nextButton: NSButton!
     var loginItem: NSMenuItem!
+    var menuPrevItem: NSMenuItem!
+    var menuNextItem: NSMenuItem!
     private var pendingRefresh: DispatchWorkItem?
+    // Remembered so a momentarily screen-less window (early launch, display sleep)
+    // reuses the last good geometry instead of collapsing to the floor.
+    private var lastRegion = CGRect(x: 0, y: 0, width: 400, height: 24)
 
     func applicationDidFinishLaunching(_ n: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -51,13 +58,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         label.font = NSFont.menuBarFont(ofSize: 0)
         label.textColor = .labelColor
 
-        let prev = control("backward.fill", "Previous", #selector(prev))
+        prevButton = control("backward.fill", "Previous", #selector(prev))
         playButton = control("play.fill", "Play or pause", #selector(playPause))
-        let next = control("forward.fill", "Next", #selector(next))
+        nextButton = control("forward.fill", "Next", #selector(next))
 
         // One status item, one custom view holding everything → a single
         // menu-bar slot, so the notch only ever clips this one item.
-        stack = NSStackView(views: [label, prev, playButton, next])
+        stack = NSStackView(views: [label, prevButton, playButton, nextButton])
         stack.orientation = .horizontal
         stack.spacing = Config.stackSpacing
         stack.alignment = .centerY
@@ -76,6 +83,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // interactive subview so a right-click anywhere on the item works.
         let menu = NSMenu()
         menu.delegate = self   // menuNeedsUpdate refreshes the login-item checkmark
+        menuPrevItem = NSMenuItem(title: "Previous", action: #selector(prev), keyEquivalent: "")
+        menuPrevItem.target = self
+        menuPrevItem.isHidden = true
+        menu.addItem(menuPrevItem)
+        menuNextItem = NSMenuItem(title: "Next", action: #selector(next), keyEquivalent: "")
+        menuNextItem.target = self
+        menuNextItem.isHidden = true
+        menu.addItem(menuNextItem)
+        menu.addItem(.separator())
         loginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLogin), keyEquivalent: "")
         loginItem.target = self
         menu.addItem(loginItem)
@@ -84,7 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                               action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quit.target = NSApp
         menu.addItem(quit)
-        for v in [host, label, prev, playButton, next] as [NSView] { v.menu = menu }
+        for v in [host, label, prevButton, playButton, nextButton] as [NSView] { v.menu = menu }
 
         DistributedNotificationCenter.default().addObserver(
             self, selector: #selector(changed),
@@ -166,27 +182,104 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Spotify unavailable → placeholder.
     func reset() {
         label.stringValue = "♪"
-        label.toolTip = nil
         playButton.image = NSImage(systemSymbolName: "play.fill", accessibilityDescription: "Play or pause")
-        resize()
+        // An empty track name makes `relayout` produce the "♪" placeholder rung and
+        // clears the tooltip, so the not-running state goes through one code path.
+        relayout(track: "", artist: "")
     }
 
     func update(track: String, artist: String, state: String) {
-        let s = Settings.current()
-        let title = "\(trunc(track, s.maxTrack)) – \(trunc(artist, s.maxArtist))"
         let playing = state.lowercased() == "playing"
-        label.stringValue = track.isEmpty ? "♪" : title
-        label.toolTip = track.isEmpty ? nil : "\(track) – \(artist)"
         playButton.image = NSImage(
             systemSymbolName: playing ? "pause.fill" : "play.fill",
             accessibilityDescription: "Play or pause")
-        resize()
+        relayout(track: track, artist: artist)
     }
 
-    /// Resize the single status item to fit its content.
-    func resize() {
+    /// The menu-bar strip this item currently lives in. Uses the status button's own
+    /// screen rather than `.main` so docking to an external display recomputes it.
+    func currentRegion() -> CGRect {
+        let screen = statusItem.button?.window?.screen ?? NSScreen.main
+        guard let screen else { return lastRegion }
+        lastRegion = BarLayout.region(auxiliaryTopRight: screen.auxiliaryTopRightArea,
+                                      screenFrame: screen.frame)
+        return lastRegion
+    }
+
+    /// Text measurement is AppKit-only, so `BarLayout` takes it as a closure.
+    func measureLabel(_ s: String) -> CGFloat {
+        (s as NSString).size(withAttributes: [.font: label.font ?? NSFont.menuBarFont(ofSize: 0)]).width
+    }
+
+    /// prev/next are unreachable at the playPause rung, so surface them in the
+    /// right-click menu exactly when the buttons are gone.
+    func prevNextMenuItems(hidden: Bool) {
+        menuPrevItem?.isHidden = hidden
+        menuNextItem?.isHidden = hidden
+    }
+
+    /// Show exactly what this rung calls for. Hidden views leave the stack's layout,
+    /// so no view is ever added or removed — the `.menu` wiring from decision #5 and
+    /// the trailing anchor from #2 both survive untouched.
+    func apply(_ r: BarLayout.Resolution, fullTitle: String?) {
+        label.isHidden = !r.rung.showsLabel
+        prevButton.isHidden = !r.rung.showsPrevNext
+        nextButton.isHidden = !r.rung.showsPrevNext
+        if let text = r.labelText { label.stringValue = text }
+
+        // At iconic rungs the label is gone, so the tooltip and the VoiceOver name
+        // are the only remaining way to learn what is playing. Put them on the host
+        // and the buttons, not just the label.
+        let host = statusItem.button
+        for v in [host, label, prevButton, playButton, nextButton].compactMap({ $0 }) {
+            v.toolTip = fullTitle
+        }
+        host?.setAccessibilityLabel(fullTitle ?? "Spotify")
+
+        prevNextMenuItems(hidden: r.rung.showsPrevNext)
+        resize(to: r.totalWidth)
+    }
+
+    /// Recompute the rung for the current track and apply it.
+    func relayout(track: String, artist: String) {
+        guard !track.isEmpty else {
+            label.stringValue = "♪"
+            let metrics = Rung.Metrics.default
+            let budget = BarLayout.budget(regionWidth: currentRegion().width,
+                                          fraction: Settings.maxWidthFraction(),
+                                          metrics: metrics)
+            // The placeholder is one glyph, so only the iconic rungs can be too wide.
+            let rung: Rung = budget >= Rung.icons.chromeWidth(metrics) + metrics.minLabelWidth
+                ? .compact : (budget >= Rung.icons.chromeWidth(metrics) ? .icons : .playPause)
+            apply(BarLayout.Resolution(rung: rung,
+                                       labelText: rung.showsLabel ? "♪" : nil,
+                                       totalWidth: budget),
+                  fullTitle: nil)
+            return
+        }
+
+        // Ads and untagged local files report an empty artist; passing it through would
+        // render a stranded "Track – " dash.
+        let subtitle = artist.isEmpty ? "" : artist
+
+        let settings = Settings.current()
+        let metrics = Rung.Metrics.default
+        let fraction = Settings.maxWidthFraction()
+        let budget = BarLayout.budget(regionWidth: currentRegion().width,
+                                      fraction: fraction, metrics: metrics)
+        let resolved = BarLayout.resolve(track: track, artist: subtitle, budget: budget,
+                                         settings: settings, metrics: metrics,
+                                         measure: measureLabel)
+        let fullTitle = track.isEmpty ? nil : (subtitle.isEmpty ? track : "\(track) – \(subtitle)")
+        apply(resolved, fullTitle: fullTitle)
+    }
+
+    /// Never request more than the budget already allowed. Still derived from the
+    /// stack's fitting size (decision #6) — only now clamped, because an unbounded
+    /// request is what made macOS hide this item and its neighbours.
+    func resize(to allowed: CGFloat) {
         stack.layoutSubtreeIfNeeded()
-        statusItem.length = stack.fittingSize.width + 8
+        statusItem.length = min(stack.fittingSize.width + Config.padding, allowed)
     }
 }
 

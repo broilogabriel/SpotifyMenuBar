@@ -25,4 +25,12 @@ public struct Settings {
             maxArtist: int("maxArtist", Config.maxArtist),
             prevRestartSecs: max(0, defaults.object(forKey: "prevRestartSecs") as? Double ?? Config.prevRestartSecs))
     }
+
+    /// Clamped hard: a `defaults write` of 0 or 9 would otherwise mean "vanish" or
+    /// "be greedy again", which are the two failures this whole feature exists to
+    /// prevent. Matches the clamping pattern of decision #13.
+    public static func maxWidthFraction(_ defaults: UserDefaults = .standard) -> Double {
+        let raw = defaults.object(forKey: "maxWidthFraction") as? Double ?? Config.maxWidthFraction
+        return min(max(raw, 0.10), 1.0)
+    }
 }

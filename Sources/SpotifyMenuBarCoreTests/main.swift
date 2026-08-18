@@ -151,5 +151,13 @@ expect(BarLayout.resolve(track: "Bohemian Rhapsody", artist: "Queen", budget: 12
 expectClose(Double(BarLayout.budget(regionWidth: 772, fraction: .nan, metrics: m)),
             24, "a NaN fraction falls back to the floor rather than poisoning the budget")
 
+// MARK: maxWidthFraction clamping
+
+d.set(0.0, forKey: "maxWidthFraction")
+expectClose(Settings.maxWidthFraction(d), 0.10, "a zero fraction clamps up to 0.10")
+d.set(9.0, forKey: "maxWidthFraction")
+expectClose(Settings.maxWidthFraction(d), 1.0, "an absurd fraction clamps down to 1.0")
+d.removeObject(forKey: "maxWidthFraction")
+expectClose(Settings.maxWidthFraction(d), Config.maxWidthFraction, "unset uses the default")
 
 summarize()
