@@ -114,11 +114,42 @@ expect(r5.rung, .playPause, "too narrow for three icons drops to playPause")
 let r6 = BarLayout.resolve(track: "Bohemian Rhapsody", artist: "Queen", budget: 0,
                            settings: st, metrics: m, measure: measure)
 expect(r6.rung, .playPause, "a zero budget still renders the floor, never nothing")
+expectClose(Double(r6.totalWidth), 24, "the floor is returned even when it overflows the budget")
 
 // -- resolve respects the user's character preferences as an upper bound
 let short = Settings(maxTrack: 5, maxArtist: 5, prevRestartSecs: 3)
 let r7 = BarLayout.resolve(track: "Bohemian Rhapsody", artist: "Queen", budget: 300,
                            settings: short, metrics: m, measure: measure)
 expect(r7.labelText, "Bohe… – Queen", "maxTrack still caps the text when pixels allow more")
+
+// Boundary pairs: each ladder transition tested at the exact edge and one point past it,
+// so an off-by-one in the guards cannot stay green.
+expect(BarLayout.resolve(track: "Bohemian Rhapsody", artist: "Queen", budget: 114,
+                         settings: st, metrics: m, measure: measure).rung, .compact,
+       "the label floor exactly still yields a labelled rung")
+expect(BarLayout.resolve(track: "Bohemian Rhapsody", artist: "Queen", budget: 113,
+                         settings: st, metrics: m, measure: measure).rung, .icons,
+       "one point below the label floor drops to icons")
+expect(BarLayout.resolve(track: "Bohemian Rhapsody", artist: "Queen", budget: 68,
+                         settings: st, metrics: m, measure: measure).rung, .icons,
+       "the icons floor exactly still yields icons")
+expect(BarLayout.resolve(track: "Bohemian Rhapsody", artist: "Queen", budget: 67,
+                         settings: st, metrics: m, measure: measure).rung, .playPause,
+       "one point below the icons floor drops to playPause")
+expect(BarLayout.ellipsisFit("Bohemian Rhapsody", 14, measure), "B\u{2026}",
+       "ellipsisFit at its exact give-up boundary still returns one char plus ellipsis")
+expect(BarLayout.ellipsisFit("Bohemian Rhapsody", 13, measure), nil,
+       "one point below that boundary gives up")
+
+// A wide-glyph font can leave a label budget above minLabelWidth that still cannot fit
+// even one character plus an ellipsis. Only a wider stub reaches that branch.
+let wide: (String) -> CGFloat = { CGFloat($0.count) * 30 }
+expect(BarLayout.resolve(track: "Bohemian Rhapsody", artist: "Queen", budget: 120,
+                         settings: st, metrics: m, measure: wide).rung, .icons,
+       "a label budget above the floor that still fits no text falls through to icons")
+
+expectClose(Double(BarLayout.budget(regionWidth: 772, fraction: .nan, metrics: m)),
+            24, "a NaN fraction falls back to the floor rather than poisoning the budget")
+
 
 summarize()

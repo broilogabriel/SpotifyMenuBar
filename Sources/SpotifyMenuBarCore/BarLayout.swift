@@ -44,7 +44,10 @@ public struct BarLayout {
                               metrics: Rung.Metrics) -> CGFloat {
         let floor = Rung.playPause.chromeWidth(metrics)
         let ceiling = max(regionWidth, floor)
-        return min(max(regionWidth * CGFloat(fraction), floor), ceiling)
+        // A non-finite fraction (a `defaults write … -float nan`) would otherwise
+        // propagate through max/min into statusItem.length as NaN.
+        let f = fraction.isFinite ? CGFloat(fraction) : 0
+        return min(max(regionWidth * f, floor), ceiling)
     }
 
     /// Shrink `s` until it measures within `budget`, appending an ellipsis. Returns
@@ -70,6 +73,10 @@ public struct BarLayout {
     /// `full` is chosen only when the preferred string fits *without* pixel
     /// truncation; anything tighter drops the artist before mangling the track,
     /// which is the stated priority — controls survive, text degrades.
+    ///
+    /// At the floor, `totalWidth` may exceed `budget`: the item always renders
+    /// something, even when the budget itself is zero or smaller than playPause's
+    /// own chrome.
     public static func resolve(track: String, artist: String, budget: CGFloat,
                                settings: Settings, metrics: Rung.Metrics,
                                measure: (String) -> CGFloat) -> Resolution {
