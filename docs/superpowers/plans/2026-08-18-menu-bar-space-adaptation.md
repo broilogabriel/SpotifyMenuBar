@@ -855,6 +855,28 @@ Replace `reset()` (`main.swift:201-206`) and `update(track:artist:state:)` (`mai
     }
 ```
 
+Spotify reports an **empty artist** for ads and for untagged local files. Left alone that
+renders `"Advertisement – "` with a stranded dash. Guard it in `relayout` where the two
+title strings are built — add this right after the `lastTrack` line, and use `subtitle` in
+place of `artist` for both the `BarLayout.resolve` call and `fullTitle`:
+
+```swift
+        // Ads and untagged local files report an empty artist; passing it through would
+        // render a stranded "Track – " dash.
+        let subtitle = artist.isEmpty ? "" : artist
+```
+
+and build the tooltip title conditionally:
+
+```swift
+        let fullTitle = track.isEmpty ? nil : (subtitle.isEmpty ? track : "\(track) – \(subtitle)")
+```
+
+`BarLayout.resolve` already collapses an empty artist correctly once `full`'s preferred
+string is `"Track – "`-free, so pass `artist: subtitle` and let the rung ladder do the rest.
+If `subtitle` is empty the `full` and `compact` labels are identical, and `resolve` will
+pick `full` — that is fine and indistinguishable to the user.
+
 `relayout` with an empty track yields a `labelText` of `" – "` at the `full` rung, which is wrong for the placeholder. Guard it at the top of `relayout`:
 
 ```swift
