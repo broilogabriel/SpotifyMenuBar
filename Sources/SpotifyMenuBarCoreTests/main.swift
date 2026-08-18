@@ -169,4 +169,20 @@ expect(BarLayout.resolve(track: "Advertisement", artist: "", budget: 300,
                          settings: st, metrics: m, measure: measure).rung, .full,
        "an empty artist still resolves to full when it fits")
 
+// MARK: DisplayMode
+
+expect(DisplayMode.from("compact"), .compact, "a known raw value parses")
+expect(DisplayMode.from("nonsense"), .auto, "an unknown value falls back to auto")
+expect(DisplayMode.from(nil), .auto, "a missing value falls back to auto")
+expect(DisplayMode.auto.pinnedRung, nil, "auto pins nothing")
+expect(DisplayMode.icons.pinnedRung, .icons, "icons pins the icons rung")
+expect(DisplayMode.allCases.count, 5, "auto plus one mode per rung")
+
+d.set("icons", forKey: "displayMode")
+expect(Settings.displayMode(d), .icons, "displayMode reads from defaults")
+d.set("garbage", forKey: "displayMode")
+expect(Settings.displayMode(d), .auto, "a garbage displayMode reads as auto")
+d.removeObject(forKey: "displayMode")
+expect(Settings.displayMode(d), .auto, "unset displayMode is auto")
+
 summarize()

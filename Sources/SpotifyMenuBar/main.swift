@@ -99,6 +99,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menuPrevNextSeparator = .separator()
         menuPrevNextSeparator.isHidden = true
         menu.addItem(menuPrevNextSeparator)
+        let displayItem = NSMenuItem(title: "Display", action: nil, keyEquivalent: "")
+        let displayMenu = NSMenu()
+        for mode in DisplayMode.allCases {
+            let item = NSMenuItem(title: mode.title, action: #selector(pickDisplayMode), keyEquivalent: "")
+            item.target = self
+            item.representedObject = mode.rawValue
+            displayMenu.addItem(item)
+        }
+        displayItem.submenu = displayMenu
+        menu.addItem(displayItem)
+        menu.addItem(.separator())
         loginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLogin), keyEquivalent: "")
         loginItem.target = self
         menu.addItem(loginItem)
@@ -182,8 +193,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } catch { NSLog("Launch-at-login toggle failed: \(error)") }
     }
 
+    @objc func pickDisplayMode(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String else { return }
+        UserDefaults.standard.set(raw, forKey: "displayMode")
+        relayout(track: lastTrack.track, artist: lastTrack.artist)
+    }
+
     func menuNeedsUpdate(_ menu: NSMenu) {
         loginItem.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
+        let current = Settings.displayMode()
+        for item in menu.item(withTitle: "Display")?.submenu?.items ?? [] {
+            item.state = (item.representedObject as? String) == current.rawValue ? .on : .off
+        }
     }
 
     func refresh() {
@@ -273,6 +294,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Recompute the rung for the current track and apply it.
     func relayout(track: String, artist: String) {
         lastTrack = (track, artist)
+        // A pinned rung skips the budget entirely — that is the point of the override —
+        // and it has to win on the placeholder path too, which returns early below.
+        let pinned = Settings.displayMode().pinnedRung
         guard !track.isEmpty else {
             let metrics = Rung.Metrics.default
             let budget = BarLayout.budget(regionWidth: currentRegion().width,
@@ -280,10 +304,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                           metrics: metrics)
             // Route the placeholder through the same tested resolver rather than a
             // second, hand-derived ladder that could drift from it.
-            apply(BarLayout.resolve(track: "♪", artist: "", budget: budget,
-                                    settings: Settings.current(), metrics: metrics,
-                                    measure: measureLabel),
-                  fullTitle: nil)
+            var placeholder = BarLayout.resolve(track: "♪", artist: "", budget: budget,
+                                                settings: Settings.current(), metrics: metrics,
+                                                measure: measureLabel)
+            if let pinned, pinned != placeholder.rung {
+                placeholder = BarLayout.Resolution(
+                    rung: pinned,
+                    labelText: pinned.showsLabel ? "♪" : nil,
+                    totalWidth: pinned.chromeWidth(metrics)
+                        + (pinned.showsLabel ? measureLabel("♪") : 0))
+            }
+            apply(placeholder, fullTitle: nil)
             return
         }
 
@@ -292,9 +323,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let fraction = Settings.maxWidthFraction()
         let budget = BarLayout.budget(regionWidth: currentRegion().width,
                                       fraction: fraction, metrics: metrics)
-        let resolved = BarLayout.resolve(track: track, artist: artist, budget: budget,
-                                         settings: settings, metrics: metrics,
-                                         measure: measureLabel)
+        let baseResolved = BarLayout.resolve(track: track, artist: artist, budget: budget,
+                                            settings: settings, metrics: metrics,
+                                            measure: measureLabel)
+        var resolved = baseResolved
+        if let pinned, pinned != resolved.rung {
+            let preferred = pinned == .full
+                ? "\(trunc(track, settings.maxTrack)) – \(trunc(artist, settings.maxArtist))"
+                : trunc(track, settings.maxTrack)
+            let text = pinned.showsLabel ? preferred : nil
+            resolved = BarLayout.Resolution(
+                rung: pinned,
+                labelText: text,
+                totalWidth: pinned.chromeWidth(metrics) + (text.map(measureLabel) ?? 0))
+        }
         // Ads and untagged local files report an empty artist; an unconditional
         // separator would render a stranded "Track – ".
         let fullTitle = artist.isEmpty ? track : "\(track) – \(artist)"

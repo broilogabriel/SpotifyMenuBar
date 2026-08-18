@@ -33,4 +33,8 @@ public struct Settings {
         let raw = defaults.object(forKey: "maxWidthFraction") as? Double ?? Config.maxWidthFraction
         return min(max(raw, 0.10), 1.0)
     }
+
+    public static func displayMode(_ defaults: UserDefaults = .standard) -> DisplayMode {
+        DisplayMode.from(defaults.string(forKey: "displayMode"))
+    }
 }
