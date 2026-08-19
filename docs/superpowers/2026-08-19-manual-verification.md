@@ -1,7 +1,7 @@
 # Manual verification — menu-bar space adaptation
 
 Everything in this branch that a machine could check is checked: `swift build` is clean
-and `swift run SpotifyMenuBarCoreTests` reports 83/83. What remains needs a human at the
+and `swift run SpotifyMenuBarCoreTests` reports 97/97. What remains needs a human at the
 keyboard, because the agent session may not launch a GUI app.
 
 Two kinds of item below:
@@ -206,3 +206,69 @@ defaults delete com.local.SpotifyMenuBar debugLayout
   part of section 3's checks, so the rung and its menu fallback can be verified after all;
   the earlier note that they were unreachable assumed the demotion loop was the only route,
   and that loop was abandoned (section 4).
+
+---
+
+## 5. Measured free space (added 2026-08-19, second plan)
+
+The status item now caps itself at the free space it can actually measure, instead of a
+fixed 25% of the region. Everything machine-checkable is checked (97/97), and I verified the
+mechanism at runtime by reading the unified log. **One thing was never directly observed and
+needs you: the headline acceptance test.**
+
+### 5.1 The check that matters — never displace a neighbour
+
+1. `./build-app.sh`, quit the running copy, replace `/Applications/SpotifyMenuBar.app`.
+2. `defaults write com.local.SpotifyMenuBar debugLayout -bool YES`
+3. `defaults delete com.local.SpotifyMenuBar displayMode` — a pin deliberately bypasses the
+   whole mechanism, so any pinned mode invalidates this test.
+4. Crowd the menu bar until it is nearly full.
+5. Launch the app. **Confirm no existing menu-bar icon disappears.**
+
+Expect the item to settle **small** — controls-only or play/pause-only. That is the honest
+cost of never evicting anyone, not a bug. `Display` overrides it if you would rather have the
+width, and that override is the one remaining path that can still displace something.
+
+### 5.2 Read the log
+
+```
+/usr/bin/log stream --predicate 'subsystem == "com.local.SpotifyMenuBar"' --info
+```
+
+The absolute path matters — `log` is commonly shadowed by a shell builtin, which silently
+returns nothing.
+
+Two fields to distinguish:
+
+- **`ceiling=`** is the cached value actually driving the budget. Measured only while the
+  item is at its minimum width, because that is the only moment nothing has been evicted and
+  the reading is honest.
+- **`available=`** is a live reading. It legitimately moves with our own width — it read 91pt
+  at 40pt wide and 437pt at 282pt wide on the same bar. **Do not** expect it to be stable.
+
+### 5.3 What correct looks like
+
+- **The cycle:** an early line at `rung=playPause` with `ceiling=nil`, then a line with a
+  real `ceiling=`, then the settled rung.
+- **No ratchet:** across several track changes, `ceiling=` holds the *same* number and the
+  rung does not creep upward. Watch `ceiling=`, not `available=`.
+- **The item fits:** `windowW` (the granted window) should not exceed `ceiling`. macOS grants
+  a window 16pt wider than the requested `length`, and the ceiling is converted to account
+  for it — observed settled state was `length=175 windowW=191 ceiling=183`.
+- **Bar changes are picked up:** quit another menu-bar app and one shrink-and-regrow should
+  happen within a second or so, ending at a possibly larger rung. Rate-limited to about one
+  per 3s.
+
+### 5.4 Judgement calls for you
+
+- **Is the blink acceptable?** Re-establishing the ceiling requires shrinking to minimum
+  first. That happens at launch, on app launch/quit, and on screen or Space change — not on
+  track changes. Launching or quitting an ordinary app with no menu-bar icon still costs one.
+- **Is the item too small on your bar?** If never-evict costs more width than you want,
+  raise it with `maxWidthFraction` (the softer ceiling) or pin a layout from **Display**.
+
+### 5.5 Turning the diagnostic off
+
+```
+defaults delete com.local.SpotifyMenuBar debugLayout
+```
