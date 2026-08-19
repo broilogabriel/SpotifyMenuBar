@@ -19,6 +19,7 @@
 - **NEVER run `swift run` bare or `swift run SpotifyMenuBar`** — it launches a blocking GUI app. `swift run SpotifyMenuBarCoreTests` is the only one permitted; it exits on its own.
 - **Do not regress `AGENTS.md` decisions 1–18.** Most relevant: one `NSStatusItem`; trailing anchor; `.menu` on every interactive subview; `statusItem.length` from the stack's `fittingSize`; icon buttons keep `accessibilityDescription`; `Settings` clamps `UserDefaults`; **`BarLayout.labelText(for:track:artist:settings:)` is the only place a bar label string is composed**; a pinned rung deliberately overrides the budget.
 - No AI attribution anywhere. Conventional Commits, imperative, lower-case, no trailing period. Comment the *why*, not the *what*.
+- **The width-invariance property asserted in earlier drafts is FALSE** — measured, see spec section 3. Do not reintroduce a measure-then-grow loop. The measurement is only honest at minimum width.
 - **Baseline: 83 checks pass today.** Every count below is cumulative and was produced by running a prototype, not derived by hand.
 - **Never edit an existing expected value to make a check pass.** If a refactor breaks one, the refactor is wrong. Call-site updates (adding a new argument) are not expectation changes and are expected in Task 3.
 - Verified environment facts you may rely on: `CGWindowLevelForKey(.statusWindow) == 25`; **our own status item cannot be located in `CGWindowList`** — macOS hosts NSStatusItem windows in the Control Center process, so every entry carries Control Center's pid and window number (`NSWindow.windowNumber` matching never succeeds; it works only for ordinary windows you create yourself); `CGWindowBounds` uses a **top-left** origin while `NSWindow.frame` uses **bottom-left**, so only `X` and `Width` are comparable.
@@ -324,140 +325,125 @@ pinned rung stays exempt by design."
 
 ---
 
-### Task 4: Start minimal, then grow
+### Task 4: The cached ceiling and the measure-at-minimum cycle
 
-The first layout cannot measure — our window is not yet committed to the window server. Rendering the smallest rung until it can is what keeps the eviction bug off the launch path.
+**Supersedes the original Tasks 4 and 5**, which were written against a width-invariance
+property that was measured and found false (spec section 3). A measure-then-grow loop would
+ratchet: widening evicts leftward neighbours, and their vacated width reads back as a
+*larger* `available`, inviting another grow. Measured four times on a real bar: our item at
+40pt read `available=91`; at 282pt it read `available=437`.
+
+So the measurement becomes a **cached ceiling** established only while the item is at its
+minimum width, where nothing has been evicted yet and the reading is therefore honest.
 
 **Files:**
-- Modify: `Sources/SpotifyMenuBar/main.swift` (`relayout`; new `scheduleMeasureRetry`; two new properties)
+- Modify: `Sources/SpotifyMenuBar/main.swift` (`relayout`; new `remeasureCeiling`; new properties; observer registration)
 
 **Interfaces:**
-- Consumes: `measuredAvailable()` (Task 2), `BarLayout.plan(…available:…)` (Task 3), `lastTrack`, `relayout`.
-- Produces: `private var measureRetryPending: Bool`, `private var measureRetries: Int`, `func scheduleMeasureRetry()`
+- Consumes: `measuredAvailable() -> CGFloat?` (Task 2), `BarLayout.plan(…available:…)` (Task 3), `relayout(track:artist:)`, `lastTrack`, `Rung.playPause.chromeWidth(_:)`.
+- Produces: `private var barCeiling: CGFloat?`, `private var measuringCeiling: Bool`, `private var ceilingAttempts: Int`, `private var pendingMeasure: DispatchWorkItem?`, `func remeasureCeiling()`, `@objc func barContentsMaybeChanged()`
 
-- [ ] **Step 1: Add the retry state and scheduler**
+- [ ] **Step 1: Add the ceiling state**
 
 Add to `AppDelegate`'s property block:
 
 ```swift
-    // Bounded grow-in state. The first layout after launch cannot measure free space
-    // because our window is not yet committed to the window server.
-    private var measureRetryPending = false
-    private var measureRetries = 0
-```
-
-Add this method next to `relayout`:
-
-```swift
-    /// One bounded re-layout once the window server has placed our item.
-    ///
-    /// Not a loop: `available` is invariant to our own width, so the first measured
-    /// layout is already final. The retry cap exists only for the pathological case
-    /// where the window is never placed — without it, a permanently nil measurement
-    /// would reschedule every runloop turn forever.
-    func scheduleMeasureRetry() {
-        guard !measureRetryPending, measureRetries < 5 else { return }
-        measureRetryPending = true
-        measureRetries += 1
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-            guard let self else { return }
-            self.measureRetryPending = false
-            self.relayout(track: self.lastTrack.track, artist: self.lastTrack.artist)
-        }
-    }
-```
-
-- [ ] **Step 2: Hoist the measurement in `relayout` and start minimal**
-
-In `relayout(track:artist:)`, replace the four hoisted locals (`settings`, `metrics`, `regionWidth`, `fraction`) block by adding the measurement immediately after `let fraction = Settings.maxWidthFraction()`:
-
-```swift
-        // Not yet placed: fall back to the smallest rung, which can never be too wide,
-        // and retry once the window server has positioned us. Starting from the fraction
-        // instead would put the eviction bug on the launch path — the reported symptom.
-        let measured = measuredAvailable()
-        if measured == nil {
-            scheduleMeasureRetry()
-        } else {
-            measureRetries = 0   // a successful measurement re-arms the budget for later
-        }
-        let available = measured ?? Rung.playPause.chromeWidth(metrics)
-```
-
-Then change **both** `BarLayout.plan` call sites from `available: measuredAvailable(),` to `available: available,` so the value is measured once per layout rather than twice.
-
-- [ ] **Step 3: Verify build and that nothing regressed**
-
-Run: `swift build`
-Expected: `Build complete!`
-
-Run: `swift run SpotifyMenuBarCoreTests`
-Expected: PASS — `93/93 checks passed`, exit 0 (unchanged; this task is AppKit-only).
-
-- [ ] **Step 4: Human verification — this is where the reported bug is fixed**
-
-Do **not** attempt this yourself; it requires launching the GUI app. Write these steps into your report and hand off:
-
-1. `./build-app.sh`, replace `/Applications/SpotifyMenuBar.app`, and quit the running copy first.
-2. `defaults write com.local.SpotifyMenuBar debugLayout -bool YES`
-3. Crowd the menu bar until it is nearly full (open menu-bar apps, and/or turn on extra Control Center items and the clock's date + seconds).
-4. Launch the app. **Confirm no existing menu-bar icon disappears.** This is the check that matters.
-5. Read `/usr/bin/log stream --predicate 'subsystem == "com.local.SpotifyMenuBar"' --info` and confirm two things: an early line with `available=nil` at `rung=playPause`, then a later line with a real `available=` value at a larger rung — the grow-in.
-6. Confirm `requested=` never exceeds `available=` on any line where `available=` is not `nil`.
-7. Note whether the launch grow-in is visually objectionable.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add Sources/SpotifyMenuBar/main.swift
-git commit -m "feat(menubar): start at the smallest rung until free space is measurable"
-```
-
----
-
-### Task 5: Re-measure when the bar's contents change
-
-Another app launching or quitting is when status items actually appear and disappear. These need their own coalescing.
-
-**Files:**
-- Modify: `Sources/SpotifyMenuBar/main.swift` (`applicationDidFinishLaunching`; new `barContentsMaybeChanged`; one new property)
-
-**Interfaces:**
-- Consumes: `relayout`, `lastTrack` (existing).
-- Produces: `private var pendingMeasure: DispatchWorkItem?`, `@objc func barContentsMaybeChanged()`
-
-- [ ] **Step 1: Add the coalesced handler**
-
-Add to `AppDelegate`'s property block:
-
-```swift
-    // Coalesced separately from `pendingRefresh`: sharing one work item would let a track
-    // change cancel a pending measurement, or the reverse.
+    // The widest this item may be on the current bar, measured while it was at its
+    // minimum width — the only moment nothing has been evicted yet, so the only moment
+    // the reading is honest. nil means "not yet known", which forces the minimum rung.
+    private var barCeiling: CGFloat?
+    private var measuringCeiling = false
+    private var ceilingAttempts = 0
+    // Coalesced separately from `pendingRefresh`, which covers only PlaybackStateChanged;
+    // sharing one work item would let a track change cancel a pending measurement.
     private var pendingMeasure: DispatchWorkItem?
 ```
 
-Add the handler next to `screenChanged()`:
+- [ ] **Step 2: Use the cached ceiling in `relayout`**
+
+In `relayout(track:artist:)`, immediately after `let fraction = Settings.maxWidthFraction()`, add:
 
 ```swift
-    /// Another app launching or quitting is when menu-bar items actually come and go.
-    /// Debounced because login items and Space switches deliver these in bursts.
-    @objc func barContentsMaybeChanged() {
-        pendingMeasure?.cancel()
-        let work = DispatchWorkItem { [weak self] in
+        // Deliberately does NOT re-measure. Ordinary relayouts reuse the cached ceiling,
+        // which is what keeps the shrink-and-regrow blink rare and removes any per-track
+        // ratchet. Only `remeasureCeiling()` re-reads it.
+        let available = barCeiling ?? Rung.playPause.chromeWidth(metrics)
+```
+
+Then change **both** `BarLayout.plan` call sites from `available: measuredAvailable(),` to `available: available,`.
+
+- [ ] **Step 3: Add the cycle**
+
+Add next to `relayout`:
+
+```swift
+    /// Re-establish `barCeiling`: drop to the minimum rung, let the window server settle,
+    /// measure, then grow once into the result.
+    ///
+    /// The shrink is not cosmetic — it is the measurement's precondition. `available` read
+    /// while we are oversized reflects neighbours we already evicted (measured: 91pt at
+    /// 40pt wide versus 437pt at 282pt wide), so growing on that number ratchets.
+    func remeasureCeiling() {
+        guard !measuringCeiling else { return }
+        measuringCeiling = true
+        ceilingAttempts = 0
+        barCeiling = nil                                       // forces the minimum rung
+        relayout(track: lastTrack.track, artist: lastTrack.artist)
+        attemptCeilingMeasurement()
+    }
+
+    /// Bounded retry: the window server needs a turn to place and resize the item, and at
+    /// launch it may not be placed at all yet. Without the cap a permanently unplaced
+    /// window would reschedule forever.
+    private func attemptCeilingMeasurement() {
+        ceilingAttempts += 1
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
             guard let self else { return }
-            self.relayout(track: self.lastTrack.track, artist: self.lastTrack.artist)
+            if let measured = self.measuredAvailable() {
+                self.barCeiling = measured
+                self.measuringCeiling = false
+                self.relayout(track: self.lastTrack.track, artist: self.lastTrack.artist)
+            } else if self.ceilingAttempts < 6 {
+                self.attemptCeilingMeasurement()
+            } else {
+                // Give up for now and leave the ceiling unknown: the item stays minimal,
+                // which is wrong-but-safe. The next trigger tries again.
+                self.measuringCeiling = false
+            }
         }
-        pendingMeasure = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
     }
 ```
 
-- [ ] **Step 2: Register the observers**
+- [ ] **Step 4: Add the coalesced trigger and register the observers**
 
-In `applicationDidFinishLaunching`, immediately after the existing `NSWorkspace.shared.notificationCenter.addObserver(...)` call for `activeSpaceDidChangeNotification`:
+Add next to `screenChanged()`:
 
 ```swift
-        // NSWorkspace notifications only post on NSWorkspace's own centre — registering
+    /// The bar's contents plausibly changed, so the cached ceiling is stale. Coalesced
+    /// because login-item startup delivers app-launch notifications in bursts, and each
+    /// one would otherwise cost a shrink-and-regrow blink.
+    @objc func barContentsMaybeChanged() {
+        pendingMeasure?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.remeasureCeiling() }
+        pendingMeasure = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+    }
+```
+
+Change `screenChanged()` to re-establish the ceiling rather than just relayout, since a
+display change alters the region and therefore the ceiling:
+
+```swift
+    @objc func screenChanged() {
+        barContentsMaybeChanged()
+    }
+```
+
+In `applicationDidFinishLaunching`, immediately after the existing
+`activeSpaceDidChangeNotification` registration:
+
+```swift
+        // NSWorkspace notifications post only on NSWorkspace's own centre — registering
         // these on `.default` would silently never fire.
         for name in [NSWorkspace.didLaunchApplicationNotification,
                      NSWorkspace.didTerminateApplicationNotification] {
@@ -466,23 +452,52 @@ In `applicationDidFinishLaunching`, immediately after the existing `NSWorkspace.
         }
 ```
 
-- [ ] **Step 3: Verify build and that nothing regressed**
+Finally, kick off the first cycle. Replace the existing `refresh()` call at the end of
+`applicationDidFinishLaunching` with:
+
+```swift
+        refresh()
+        remeasureCeiling()
+```
+
+- [ ] **Step 5: Verify build and that nothing regressed**
 
 Run: `swift build`
 Expected: `Build complete!`
 
 Run: `swift run SpotifyMenuBarCoreTests`
-Expected: PASS — `93/93 checks passed`, exit 0.
+Expected: PASS — `93/93 checks passed`, exit 0 (unchanged; this task is AppKit-only).
 
-- [ ] **Step 4: Human verification**
+- [ ] **Step 6: Write the human-verification handoff**
 
-Hand off, do not attempt: with `debugLayout` on and the app running on a nearly-full bar, quit another menu-bar app and confirm a new `[layout]` line appears within about a second with a **larger** `available=`; launch it again and confirm `available=` shrinks and the rung steps down if needed.
+Do **not** attempt this yourself — it requires launching the GUI app. Put these in your
+report:
 
-- [ ] **Step 5: Commit**
+1. `./build-app.sh`, quit the running copy, replace `/Applications/SpotifyMenuBar.app`.
+2. `defaults write com.local.SpotifyMenuBar debugLayout -bool YES`, and make sure no pin is
+   active: `defaults delete com.local.SpotifyMenuBar displayMode`.
+3. Crowd the menu bar until it is nearly full.
+4. Launch the app. **Confirm no existing menu-bar icon disappears.** This is the check that
+   matters. Expect the item to settle small — `icons` or `playPause` — which is the honest
+   cost of never evicting, not a bug.
+5. In `/usr/bin/log stream --predicate 'subsystem == "com.local.SpotifyMenuBar"' --info`,
+   confirm the cycle: an early line at `rung=playPause` with `available=nil`, then a line
+   with a real `available=`, then the settled rung.
+6. **Confirm no ratchet:** let several tracks change and confirm `available=` stays the
+   *same* number across them and the rung does not creep upward.
+7. Quit another menu-bar app and confirm one shrink-and-regrow happens within about a
+   second, ending at a possibly larger rung.
+8. Note whether the blink at step 7 is objectionable.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add Sources/SpotifyMenuBar/main.swift
-git commit -m "feat(menubar): re-measure free space when apps launch or quit"
+git commit -m "feat(menubar): cache a ceiling measured at minimum width
+
+available read while the item is oversized reflects neighbours it already
+evicted, so a measure-then-grow loop ratchets. Measure only at the minimum
+rung, cache the result, and re-establish it when the bar changes."
 ```
 
 ---
