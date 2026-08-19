@@ -286,8 +286,11 @@ expectClose(Double(BarLayout.availableWidth(own: us,
                                             region: regionR)),
             0, "an item left of the region clamps to zero")
 
-// The property the whole design rests on: `available` must not move as our own width
-// changes, or the grow-in in Task 4 would oscillate forever.
+// Arithmetic only: with a fixed right edge and a fixed set of neighbours, widening trades
+// gap for width one-for-one. Real bars do NOT behave this way — macOS hides leftward
+// neighbours as we grow, so a live `available` reading rises with our own width (measured:
+// 91pt at 40pt wide, 437pt at 282pt wide). That is why the ceiling is measured only at the
+// minimum rung. Do not cite this sweep as evidence of live invariance.
 var availableStable = true
 for w in stride(from: CGFloat(24), through: 400, by: 4) {
     // The item's right edge is fixed; width grows leftward, so minX moves left.
@@ -297,7 +300,8 @@ for w in stride(from: CGFloat(24), through: 400, by: 4) {
         availableStable = false
     }
 }
-expect(availableStable, true, "available is invariant to our own width")
+expect(availableStable, true,
+       "the arithmetic trades gap for width one-for-one under a fixed packed block")
 
 // MARK: plan — measured free space as a second ceiling
 

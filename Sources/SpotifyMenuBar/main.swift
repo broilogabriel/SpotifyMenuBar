@@ -55,6 +55,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Spotify — an Apple Event on every screen-parameter notification would be
     // both slow and needless.
     private var lastTrack: (track: String, artist: String) = ("", "")
+    // The widest this item may be on the current bar, measured while it was at its
+    // minimum width — the only moment nothing has been evicted yet, so the only moment
+    // the reading is honest. nil means "not yet known", which forces the minimum rung.
+    private var barCeiling: CGFloat?
+    private var measuringCeiling = false
+    private var ceilingAttempts = 0
+    // Coalesced separately from `pendingRefresh`, which covers only PlaybackStateChanged;
+    // sharing one work item would let a track change cancel a pending measurement.
+    private var pendingMeasure: DispatchWorkItem?
 
     func applicationDidFinishLaunching(_ n: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -131,8 +140,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(screenChanged),
             name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+        // NSWorkspace notifications post only on NSWorkspace's own centre — registering
+        // these on `.default` would silently never fire.
+        for name in [NSWorkspace.didLaunchApplicationNotification,
+                     NSWorkspace.didTerminateApplicationNotification] {
+            NSWorkspace.shared.notificationCenter.addObserver(
+                self, selector: #selector(barContentsMaybeChanged), name: name, object: nil)
+        }
 
         refresh()
+        remeasureCeiling()
     }
 
     func control(_ symbol: String, _ label: String, _ action: Selector) -> NSButton {
@@ -180,7 +197,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Dock/undock, resolution change, or a Space switch can all change the region
     /// this item has to fit into.
     @objc func screenChanged() {
-        relayout(track: lastTrack.track, artist: lastTrack.artist)
+        barContentsMaybeChanged()
+    }
+
+    /// The bar's contents plausibly changed, so the cached ceiling is stale. Coalesced
+    /// because login-item startup delivers app-launch notifications in bursts, and each
+    /// one would otherwise cost a shrink-and-regrow blink.
+    @objc func barContentsMaybeChanged() {
+        pendingMeasure?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.remeasureCeiling() }
+        pendingMeasure = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
     }
 
     // MARK: - Launch at login (SMAppService, macOS 13+)
@@ -397,12 +424,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let metrics = Rung.Metrics.default
         let regionWidth = currentRegion().width
         let fraction = Settings.maxWidthFraction()
+        // Deliberately does NOT re-measure. Ordinary relayouts reuse the cached ceiling,
+        // which is what keeps the shrink-and-regrow blink rare and removes any per-track
+        // ratchet. Only `remeasureCeiling()` re-reads it.
+        let available = barCeiling ?? Rung.playPause.chromeWidth(metrics)
 
         guard !track.isEmpty else {
             // Route the placeholder through the same tested plan rather than a second,
             // hand-derived ladder that could drift from it.
             let placeholder = BarLayout.plan(track: "♪", artist: "", regionWidth: regionWidth,
-                                             fraction: fraction, available: measuredAvailable(),
+                                             fraction: fraction, available: available,
                                              pin: pinned, settings: settings,
                                              metrics: metrics, measure: measureLabel)
             apply(placeholder, fullTitle: nil)
@@ -410,13 +441,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         let resolved = BarLayout.plan(track: track, artist: artist, regionWidth: regionWidth,
-                                      fraction: fraction, available: measuredAvailable(),
+                                      fraction: fraction, available: available,
                                       pin: pinned, settings: settings,
                                       metrics: metrics, measure: measureLabel)
         // Ads and untagged local files report an empty artist; an unconditional
         // separator would render a stranded "Track – ".
         let fullTitle = artist.isEmpty ? track : "\(track) – \(artist)"
         apply(resolved, fullTitle: fullTitle)
+    }
+
+    /// Re-establish `barCeiling`: drop to the minimum rung, let the window server settle,
+    /// measure, then grow once into the result.
+    ///
+    /// The shrink is not cosmetic — it is the measurement's precondition. `available` read
+    /// while we are oversized reflects neighbours we already evicted (measured: 91pt at
+    /// 40pt wide versus 437pt at 282pt wide), so growing on that number ratchets.
+    func remeasureCeiling() {
+        guard !measuringCeiling else { return }
+        measuringCeiling = true
+        ceilingAttempts = 0
+        barCeiling = nil                                       // forces the minimum rung
+        relayout(track: lastTrack.track, artist: lastTrack.artist)
+        attemptCeilingMeasurement()
+    }
+
+    /// Bounded retry: the window server needs a turn to place and resize the item, and at
+    /// launch it may not be placed at all yet. Without the cap a permanently unplaced
+    /// window would reschedule forever.
+    private func attemptCeilingMeasurement() {
+        ceilingAttempts += 1
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+            guard let self else { return }
+            if let measured = self.measuredAvailable() {
+                self.barCeiling = measured
+                self.measuringCeiling = false
+                self.relayout(track: self.lastTrack.track, artist: self.lastTrack.artist)
+            } else if self.ceilingAttempts < 6 {
+                self.attemptCeilingMeasurement()
+            } else {
+                // Give up for now and leave the ceiling unknown: the item stays minimal,
+                // which is wrong-but-safe. The next trigger tries again.
+                self.measuringCeiling = false
+            }
+        }
     }
 
     /// Never request more than the budget already allowed. Still derived from the
