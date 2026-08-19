@@ -221,11 +221,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         barContentsMaybeChanged()
     }
 
-    /// The bar's contents plausibly changed, so the cached ceiling is stale. Coalesces
-    /// only bursts that land within this 0.3s window, not a whole login: login items
-    /// appear over several seconds, so expect a handful of sequential cycles at login,
-    /// not one.
+    /// The bar's contents plausibly changed, so the cached ceiling is stale.
+    ///
+    /// Rate-limited here rather than in `remeasureCeiling()`: this is the only noisy caller
+    /// (`didLaunchApplication` fires for every app, most of which own no status item), and
+    /// limiting the shared function instead would also throttle the launch cycle, the
+    /// Display menu, and the queued re-entry — none of which are spam.
+    ///
+    /// Coalesces only bursts that land within this 0.3s window, not a whole login: login
+    /// items appear over several seconds, so expect a handful of sequential cycles at
+    /// login, not one.
     @objc func barContentsMaybeChanged() {
+        if let last = lastCeilingMeasurement, Date().timeIntervalSince(last) < 3 { return }
         pendingMeasure?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.remeasureCeiling() }
         pendingMeasure = work
@@ -246,8 +253,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func pickDisplayMode(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String else { return }
         UserDefaults.standard.set(raw, forKey: "displayMode")
-        // Not a bare relayout: leaving a pin re-enters Auto, and Auto must budget off a
-        // ceiling measured honestly under Auto, not whatever a pin left cached.
+        // Reflect the choice immediately — `remeasureCeiling()` returns early under a pin
+        // and would otherwise leave the menu selection with no visible effect.
+        relayout(track: lastTrack.track, artist: lastTrack.artist)
+        // Then re-establish an honest ceiling. Under a pin this only clears it; on the way
+        // back to Auto it measures, which is what stops a pin's stale ceiling being spent.
         remeasureCeiling()
     }
 
@@ -496,11 +506,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             barCeiling = nil
             return
         }
-        // Most app launches own no status item; without this, every launch and quit costs
-        // a visible shrink-and-regrow.
-        if let last = lastCeilingMeasurement, Date().timeIntervalSince(last) < 3 {
-            return
-        }
         measuringCeiling = true
         ceilingAttempts = 0
         barCeiling = nil                                       // forces the minimum rung
@@ -525,7 +530,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.relayout(track: self.lastTrack.track, artist: self.lastTrack.artist)
                 if self.remeasureQueued {
                     self.remeasureQueued = false
-                    self.barContentsMaybeChanged()      // re-enters via the 0.3s coalescer
+                    self.remeasureCeiling()      // direct, so the rate limit can't swallow it
                 }
             } else if self.ceilingAttempts < 6 {
                 self.attemptCeilingMeasurement()
