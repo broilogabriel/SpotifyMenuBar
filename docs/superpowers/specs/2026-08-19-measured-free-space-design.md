@@ -113,58 +113,103 @@ BarLayout.availableWidth(own: CGRect, all: [CGRect], region: CGRect) -> CGFloat
 `own` is included in `all`; that is intentional and required for the stability property
 below.
 
-### 3. Why this cannot oscillate
+### 3. The invariance claim was FALSE — measured 2026-08-19
 
-`available = own.width + gap`. Growing by *X* increases `own.width` by *X* and decreases
-`gap` by *X*, so **`available` is invariant to our own width**. Re-measuring after a resize
-yields the same number, so the grow-in converges in one step and needs no hysteresis, no
-damping and no timer.
+This section previously argued that `available = own.width + gap` is invariant to our own
+width, because growing by *X* raises `own.width` by *X* while lowering `gap` by *X*. **That
+is wrong, and it was refuted empirically before any feedback loop was built.**
 
-This holds only while we stay within `available`. Exceeding it evicts a neighbour, whose
-vacated width then *increases* the measured gap — a runaway. The never-evict rule below is
-what keeps the invariant true.
+Changing only our own width, via the Display pin, four consecutive times:
+
+| pinned rung | our width | leftmost neighbour `minX` | `available` |
+|---|---|---|---|
+| `playPause` | 40 | 1007 | **91** |
+| `full` | 282 | 1111 | **437** |
+
+`available` more than quadruples. The arithmetic is correct (`40+51`, `282+155`); the
+premise is not. `gap` is measured to the leftmost **visible** item, and as we widen, macOS
+*hides* leftward neighbours — so their vacated width reappears as a larger gap. At `full`
+the leftmost neighbour sits further **right** (1111) than when we are narrow (1007),
+because the items that occupied 1007–1111 are gone.
+
+**Consequence: a measure-then-grow feedback loop is a runaway, not a convergence.** Measure
+91 → grow → evict → measure 437 → grow again, ratcheting until it hits the fraction or the
+region. Any design that re-measures while oversized is measuring the damage it just did.
+
+### 3a. What is actually trustworthy: measure at minimum
+
+A measurement is only valid **while nothing has been evicted**, which is only reliably true
+while our item is at its smallest. On the bar above that yields **91pt** — the genuine
+answer to "how much may I take without displacing anyone", and it corresponds to the
+`icons` rung (68pt), not `compact`.
+
+So the measurement is a **cached ceiling**, established at minimum width, not a per-layout
+reading:
+
+```
+barCeiling: CGFloat?        // nil = unknown; forces the minimum rung
+
+budget = min(maxWidthFraction × region.width, barCeiling ?? chrome(.playPause))
+```
+
+- Ordinary relayouts (track changes) **never re-measure**. They reuse `barCeiling`, so
+  there is no per-track flicker and no opportunity to ratchet.
+- `barCeiling` is re-established only by an explicit `remeasureCeiling()` cycle: drop to
+  the minimum rung, let the window server settle, measure, cache, then grow once into it.
+- That cycle costs one brief shrink-and-regrow. It runs at launch and when the bar's
+  contents plausibly changed (app launch/quit, screen change, Space change) — **not** on
+  every track change, so the blink is rare rather than constant.
 
 ### 4. Budget
 
 ```
-budget = min(maxWidthFraction × region.width, available)   // measurable
-       = chrome(.playPause)                                // not yet placed
+budget = min(maxWidthFraction × region.width, barCeiling ?? chrome(.playPause))
 ```
 
-`maxWidthFraction` is retained as the user's "don't hog" preference. The measurement is a
-second, harder ceiling. **The automatic path never exceeds `available`, so it can never
-displace another app's icon.**
+`maxWidthFraction` is retained as the user's "don't hog" preference. `barCeiling` — the
+ceiling measured at minimum width, per 3a — is the harder one. A nil ceiling means
+"unknown", and the `chrome(.playPause)` fallback makes the item render minimally until the
+cycle in section 5 establishes it.
 
-### 5. Startup — start minimal, then grow
+Floored at `chrome(.playPause)` so the item always renders something even when there is
+genuinely no room.
 
-The first layout cannot measure: `statusItem.button?.window?.frame` is `{{0,-33},…}` before
-placement (observed). So:
+### 5. Startup — the ceiling cycle
 
-1. First layout renders `playPause` (24pt) — the smallest thing that is never too big.
-2. On the next runloop turn, measure and re-layout into the real budget.
+The first layout cannot measure at all: `statusItem.button?.window?.frame` is
+`{{0,-33},…}` before placement (observed), so `statusItemFrames()` returns nil. Combined
+with 3a, startup is one instance of the general cycle:
 
-One bounded re-layout, not a loop. The cost is a brief visible expand at launch. This
-ordering is deliberate: the alternative — start at the fraction and correct downward — puts
-the eviction bug on the launch path, which is exactly the reported symptom.
+1. `barCeiling` is nil, so the first layout renders `playPause` — the smallest thing, which
+   can never be too big and cannot evict anyone.
+2. After a short delay (the window server needs a turn to place and size the item),
+   measure. If the measurement is still nil, retry — bounded, because a permanently
+   unplaced window would otherwise reschedule forever.
+3. Cache the result as `barCeiling` and relayout once, growing into it.
 
-### 6. Re-measure triggers
+The alternative — start at the fraction and correct downward — puts the eviction on the
+launch path, which is precisely the reported symptom.
 
-The three already wired (`refresh`/track change, `didChangeScreenParametersNotification`,
-`activeSpaceDidChangeNotification`) plus two new ones, because app launch and quit is when
-the bar's contents actually change:
+### 6. When the ceiling is re-established
 
+`remeasureCeiling()` runs when the bar's contents plausibly changed:
+
+- at launch (section 5)
 - `NSWorkspace.didLaunchApplicationNotification`
 - `NSWorkspace.didTerminateApplicationNotification`
+- `NSApplication.didChangeScreenParametersNotification`
+- `NSWorkspace.activeSpaceDidChangeNotification`
 
-Both on `NSWorkspace.shared.notificationCenter` — not the default center, or they never
-fire.
+The two `NSWorkspace` ones must be registered on `NSWorkspace.shared.notificationCenter`,
+not the default centre, or they never fire.
 
-**These need their own coalescing.** The existing `pendingRefresh` debounce covers only
-`PlaybackStateChanged`; `screenChanged()` relayouts immediately. Login-item startup or a
-Space full of app launches can deliver these in bursts, so route them through the same
-~100ms coalescing pattern rather than calling `relayout` per notification. Reuse the
-mechanism, not the variable — a shared `pendingRefresh` would let a track change cancel a
-pending measurement or vice versa.
+**Track changes deliberately do NOT re-measure.** They reuse the cached ceiling. This is
+what keeps the shrink-and-regrow blink rare and removes any per-track ratchet.
+
+All of these need coalescing — login-item startup delivers app-launch notifications in
+bursts, and a burst of `remeasureCeiling()` calls would blink repeatedly. Coalesce on a
+work item **separate** from the existing `pendingRefresh`, which covers only
+`PlaybackStateChanged`; sharing it would let a track change cancel a pending measurement.
 
 ### 7. A pinned rung is exempt
 
@@ -212,11 +257,12 @@ would have been diagnosed in the first place.
 | What | How |
 |---|---|
 | `availableWidth` arithmetic — leftmost derivation, own-inclusion, overhang, empty `all`, clamping at 0 | `swift run SpotifyMenuBarCoreTests`, synthetic `CGRect`s |
-| The stability property — `available` invariant as `own.width` varies | a swept check over widths, asserting a constant result |
+| ~~The stability property~~ | **Removed — the property is false (section 3).** The Task 1 sweep that asserts a constant 196 checks the *arithmetic* under a synthetic packed-block model, which is fine as an arithmetic check, but it must not be read as evidence about real bar behavior. |
 | Budget composition — measurement as the harder ceiling; pin exempt | Core checks over `plan` |
 | Compiles / nothing regressed | `swift build`, existing 83 checks unmodified |
 | Bundle still assembles | `./build-app.sh` |
-| The reported bug is fixed | manual: crowd the bar, launch the app, confirm **no** neighbour icon disappears — this is the check that matters, and `debugLayout` will show `available=` next to `requested=` |
+| The reported bug is fixed | manual: crowd the bar, launch the app, confirm **no** neighbour icon disappears — the check that matters. `debugLayout` shows `available=` next to `requested=`; on a crowded bar expect the item to settle at `icons` or `playPause`, which is the honest cost of never evicting |
+| The ceiling does not ratchet | manual: with `debugLayout` on, watch across several track changes that `available=` stays constant (it is cached, not re-read) and the rung does not creep upward |
 | Grow-in is not objectionable | manual: watch the item at launch |
 
 ## Documentation to update
