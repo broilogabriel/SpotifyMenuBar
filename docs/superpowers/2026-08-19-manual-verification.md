@@ -8,8 +8,8 @@ Two kinds of item below:
 
 - **Verification** (sections 1–3) — confirming shipped behavior. If one of these fails,
   it is a bug to fix.
-- **A probe** (section 4) — a measurement whose *result* decides whether a further
-  feature is buildable at all. "Nothing moved" is a valid, useful answer.
+- **A probe** (section 4) — **already answered**, kept as the record. Nothing to run
+  there.
 
 Spec: `docs/superpowers/specs/2026-08-18-menu-bar-space-adaptation-design.md`
 Plan: `docs/superpowers/plans/2026-08-18-menu-bar-space-adaptation.md`
@@ -151,124 +151,58 @@ above):
 
 ---
 
-## 4. THE PROBE — is clip detection implementable at all?
+## 4. The probe — ANSWERED 2026-08-19, nothing left to run
 
-This is the blocking unknown. macOS exposes no API for remaining menu-bar space, and it
-is undocumented which observable field changes when it clips a status item. The shipped
-app already works without this: it never requests more than its budget. What the probe
-decides is whether a *corrective* loop — noticing the bar is crowded by other apps' items
-and stepping down a rung in response — can be built.
+Ran on the built-in notched display. **Result: clip detection is not implementable, and
+the design targeted the wrong failure mode.** Do not re-run this section; it is kept as
+the record.
 
-**"None of the three fields moved" is a complete and useful result.** It means clip
-detection is not implementable on this macOS version, the feature stays as it is
-(computed ceiling only), and `AGENTS.md` decision 16 already records that as the final
-state. Do not treat it as a failure.
-
-
-### 1. Build and install
+With the bar crowded, launching the app evicted a neighbouring icon (NordVPN's). At that
+moment our item logged:
 
 ```
-./build-app.sh
+rung=compact requested=193.0 length=188.5 visible=Y
+region={{956,1085},{772,32}}  windowFrame={{0,-33},{205,33}}
 ```
 
-Then replace the installed copy and relaunch:
+All three candidate predicates reported **healthy**, and correctly so: we asked for
+188.5pt (24% of the 772pt region), were granted it, and stayed visible. NordVPN's process
+was still alive — its icon was hidden, not its app. **We were not the clipped party; we
+were the cause.** `clipVerdict` watches our own window, so it could never have fired in
+the scenario it was written for.
+
+Being modest did not help either: an eviction happened while we were inside budget,
+because the bar had less than 188.5pt free, and macOS offers no way to ask how much room
+remains before claiming some.
+
+Full measurements, the healthy-baseline samples, and the one usable signal the probe did
+surface (the `windowFrame.minX − region.minX` headroom gap) are in
+`docs/superpowers/specs/2026-08-18-menu-bar-space-adaptation-design.md` section 5.
+`AGENTS.md` decision 16 records the outcome as final.
+
+Two incidental findings worth keeping:
+
+- **`NSLog` is unusable for diagnostics.** Current macOS redacts its formatted string to
+  `<private>` in the unified log — the original probe instructions could never have been
+  read. `logLayout` now uses `os.Logger` with `privacy: .public` per value. Read it with
+  `/usr/bin/log stream --predicate 'subsystem == "com.local.SpotifyMenuBar"' --info`
+  (absolute path: `log` may be shadowed by a shell builtin).
+- **`maxWidthFraction -float 1.0` cannot force clipping.** Label length is bounded by real
+  track metadata, not config; the item topped out at 351pt and stayed visible. Only
+  crowding the bar with other apps reproduces it.
+
+### Turning the diagnostic off
 
 ```
-rm -rf /Applications/SpotifyMenuBar.app
-mv SpotifyMenuBar.app /Applications/
-open /Applications/SpotifyMenuBar.app
+defaults delete com.local.SpotifyMenuBar debugLayout
 ```
-
-(Adjust paths if `build-app.sh` emits the `.app` somewhere other than the repo root —
-check its output.)
-
-### 2. Turn the diagnostic on
-
-```
-defaults write com.local.SpotifyMenuBar debugLayout -bool YES
-```
-
-Relaunch the app after setting this (`UserDefaults` is read at each `apply` call, but a
-fresh launch guarantees a clean log from the start).
-
-### 3. Read the log
-
-```
-log stream --predicate 'eventMessage CONTAINS "[layout]"' --info
-```
-
-(Console.app with a search filter of `[layout]` works identically if preferred.)
-
-Each line looks like:
-
-```
-[layout] rung=full text=Some Track requested=210.0 length=210.0 region={{0, 0}, {1440, 24}} visible=Y windowFrame={{1200, 0}, {210, 24}}
-```
-
-### 4. Force a healthy baseline
-
-With the bar otherwise uncrowded, play/change a track (or trigger any `relayout`) and
-capture one or two `[layout]` lines. This is the reference state everything else is
-compared against.
-
-### 5. Force clipping — at least two ways
-
-**A. Crowd the bar with other apps' status items.** Launch several menu-bar apps (or
-increase an existing one's width — e.g. an app that shows a live text ticker) until
-there is no room left for this item. macOS clips items right-to-left as space runs out,
-so keep adding until the Spotify item either shrinks unexpectedly, disappears, or the
-system menu overflow indicator (»)/Bartender-style behavior kicks in.
-
-**B. Make this item greedy on purpose.**
-
-```
-defaults write com.local.SpotifyMenuBar maxWidthFraction -float 1.0
-```
-
-Relaunch, then trigger a `relayout` (change track). This inflates the computed budget
-toward the full width of the screen, which should force macOS to clip or hide the item
-even without other apps competing for space — a repeatable, single-machine way to
-provoke the same condition as (A).
-
-Capture `[layout]` lines in this crowded/greedy state.
-
-### 6. Compare the two states — exactly these three fields
-
-| Field | Healthy expectation | What clipping might do |
-|---|---|---|
-| `visible=` | `Y` | Flips to `N` if macOS fully hides the item |
-| `windowFrame` width vs. `length=` | equal (or windowFrame ≥ length) | windowFrame width smaller than the requested `length` if macOS granted less space than asked |
-| `windowFrame` origin vs. `region=` | windowFrame origin is at or right of `region`'s `minX` | windowFrame origin pushed left of `region.minX` if the item was shifted/squeezed |
-
-Report which of these three differ between the healthy and the crowded/greedy capture,
-and by how much (paste the actual log lines, not a paraphrase).
-
-### 7. Turn the diagnostic back off
-
-```
-defaults write com.local.SpotifyMenuBar debugLayout -bool NO
-```
-
-(Optionally also revert the greedy test key if it was set:
-`defaults write com.local.SpotifyMenuBar maxWidthFraction -float <previous-value>`, or
-`defaults delete com.local.SpotifyMenuBar maxWidthFraction` to fall back to its default.)
-
-### A valid result is "nothing moved"
-
-**If none of the three fields differ between the healthy and clipped captures, that is a
-legitimate, useful result — not a failed probe.** It means macOS gives no observable
-signal when it clips this status item on the tested OS version, so `clipVerdict()` in
-Step 3 should be implemented as `.unknown` unconditionally (with a comment recording what
-was tested), and the feature ships on the computed budget/ceiling alone — which the
-existing design (Tasks 1–6) already handles without this feedback loop. Report the null
-result plainly; do not read it as something having gone wrong.
-
-
----
 
 ## Known not verified
 
-- The `playPause` rung and its right-click prev/next fallback. `maxWidthFraction` clamps
-  at 0.10, so reaching a budget below the 68pt `icons` floor needs a screen narrower than
-  ~1360pt. Unreachable by any setting on a normal display, so those menu items and the
-  separator fix are untested until a demotion path can reach the floor.
+- The `playPause` rung and its right-click prev/next fallback via `maxWidthFraction`:
+  that key clamps at 0.10, so reaching a budget below the 68pt `icons` floor needs a
+  screen narrower than ~1360pt. **However, this is now reachable another way** — pick
+  **right-click → Display → Play/Pause Only**, which pins the rung directly. That path is
+  part of section 3's checks, so the rung and its menu fallback can be verified after all;
+  the earlier note that they were unreachable assumed the demotion loop was the only route,
+  and that loop was abandoned (section 4).

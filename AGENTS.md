@@ -95,16 +95,22 @@ will likely reintroduce the bug noted.
     narrower rung is ever needed, its dropped controls must relocate into the
     right-click menu the same way `playPause` moves prev/next there, or that
     function becomes unreachable.
-16. **Clip detection is NOT implemented, on purpose.** macOS exposes no API for
-    remaining menu-bar space, and which observable field changes when it clips a status
-    item is undocumented. The shipped behavior is the computed ceiling alone, which the
-    design sanctions as a complete outcome. `debugLayout` is the instrumentation for
-    measuring it; the probe and the design for the corrective feedback loop live in
-    `docs/superpowers/specs/2026-08-18-menu-bar-space-adaptation-design.md`. If it is ever
-    built, `clipVerdict` must stay **three-state** — `.unknown` means "no usable signal",
-    and the caller then trusts the budget alone — and must compare the granted window
-    width against `statusItem.length`, never against `Resolution.totalWidth`, which
-    `resize(to:)` deliberately sets a few points below at labelled rungs.
+16. **Clip detection was probed on 2026-08-19 and abandoned — do not reopen it without
+    reading why.** The shipped behavior is the computed ceiling alone, and that is final,
+    not pending. The probe showed the design targeted the wrong failure mode: with the bar
+    crowded, our item asked for 188.5pt (24% of a 772pt region), was granted it, and stayed
+    `visible=Y` — while a *neighbouring* icon got evicted. All three candidate predicates
+    (`isVisible`, granted width vs requested, `minX` vs region) correctly reported healthy,
+    because we were not the clipped party; we were the cause. Watching our own window can
+    never detect that. Worse, being modest did not prevent it: macOS offers no way to ask
+    how much room remains before claiming some. `clipVerdict`, `applyWithFeedback` and
+    `Clip` were never written. Full measurements in
+    `docs/superpowers/specs/2026-08-18-menu-bar-space-adaptation-design.md` section 5.
+    Two facts that cost time to learn: **`NSLog` is unusable for diagnostics** here —
+    current macOS redacts its formatted string to `<private>` in the unified log, so
+    `logLayout` uses `os.Logger` with an explicit `privacy: .public` per value; and
+    **`maxWidthFraction -float 1.0` cannot force clipping**, because label length is
+    bounded by real track metadata, not config.
 17. **`BarLayout.labelText(for:track:artist:settings:)` is the ONLY place a bar label
     string is composed.** `resolve` and `pin` both route through it. An empty artist
     (Spotify ads, untagged local files) must collapse to the track alone — a stranded
@@ -222,8 +228,12 @@ commit the spec, do it for real.
 
 - Proper Developer ID signing + notarization (currently ad-hoc, personal use only).
 - Apple Music support, album art, configurable hotkeys, a preferences UI.
-- The clip-detection / auto-demotion feedback loop described in decision #16 —
-  intentionally not implemented; it needs human-gathered probe data first. See
-  `docs/superpowers/specs/2026-08-18-menu-bar-space-adaptation-design.md`.
+- ~~Clip-detection / auto-demotion feedback loop~~ — **probed and abandoned**, see
+  decision #16. Not future work; the premise was wrong.
+- **Headroom-gap sizing** is the open idea worth pursuing instead. The probe found that
+  `windowFrame.minX − region.minX` tracks our own width exactly, making it a *measurable*
+  estimate of how much further the item could grow — the quantity the budget currently
+  guesses at with a fixed fraction. Caveat: that gap also contains any items to our left,
+  so it is headroom plus leftward neighbours, not pure free space.
 
 If you add any of these, update `README.md` and this file.

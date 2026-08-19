@@ -117,44 +117,73 @@ nil if even one character plus the ellipsis overflows. `full` is chosen only whe
 preferred string fits *without* pixel truncation; anything tighter drops the artist first,
 which matches the stated priority (controls survive, text degrades).
 
-### 5. Clip feedback
+### 5. Clip feedback — PROBED AND ABANDONED (2026-08-19)
 
-**Not implemented — see AGENTS.md decision 16. Only the `debugLayout` diagnostic below
-shipped.**
+**Not implemented, and will not be.** The probe was run on the built-in notched display
+and the result did not merely fail to find a signal — it showed this design targets the
+wrong failure mode. Recorded here because the reasoning is the useful part.
 
-After applying a resolution and setting `statusItem.length`, on the next runloop turn:
+#### What was measured
 
-```
-verdict = clipVerdict()
-if verdict == .clipped and rung is not .playPause:
-    rung = next(rung); apply; repeat        // bounded at 3 iterations
-```
-
-`clipVerdict() -> Clip` is three-state — `.clipped`, `.notClipped`, `.unknown`:
+`debugLayout` was enabled and the menu bar crowded until launching the app evicted a
+neighbouring icon (NordVPN's). The line logged at that moment:
 
 ```
-guard let button = statusItem.button,
-      let window = button.window,
-      let screen = window.screen           else { return .unknown }
-if !statusItem.isVisible                    { return .clipped }
-if window.frame.width + 0.5 < requestedLength { return .clipped }
-if window.frame.minX < barRegion(screen).minX − 0.5 { return .clipped }
-return .notClipped
+rung=compact requested=193.0 length=188.5 visible=Y
+region={{956,1085},{772,32}}  windowFrame={{0,-33},{205,33}}
 ```
 
-**`.unknown` falls back to the computed ceiling alone.** This is deliberate: the design
-must still work if macOS gives us no usable clipping signal.
+Healthy steady-state samples for comparison:
 
-No timer and no hysteresis machinery. The loop is bounded and deterministic per
-evaluation, so it cannot flap; and because every evaluation restarts from the
-budget-derived rung, the item recovers upward on its own once the bar empties.
+```
+minX=1017 width=198  region.minX=956    (gap 61pt)
+minX=1010 width=205  region.minX=956    (gap 54pt)
+minX=1012 width=205  region.minX=956    (gap 56pt)
+```
 
-**Unverified assumption — first task in the plan.** Which of those three predicates
-actually fires when macOS clips a status item has not been confirmed; it cannot be, from a
-non-interactive session, because `swift run` launches a blocking GUI app. The probe is to
-log `statusItem.isVisible`, `window.frame` and the region at each rung while crowding the
-bar, and identify the field that moves. If none do, `clipVerdict` is hardcoded to
-`.unknown` and the feature ships ceiling-only. Everything else in this design is unaffected.
+#### Why the design was wrong, not just unverifiable
+
+All three candidate predicates reported **healthy**, correctly. Our item asked for
+188.5pt — 24% of the region, well inside budget — was granted it, and stayed visible.
+NordVPN's *process* was still running, so its icon was hidden, not its app.
+
+**We were not the clipped party. We were the cause.** `clipVerdict` watches our own
+window for evidence that *we* were squeezed; the failure users actually report is that
+our arrival evicted somebody else. No amount of observing our own item detects that, so
+the feedback loop could never have fired in the scenario it was written for.
+
+A second, harder limitation: being modest did not help. At 188.5pt we were already inside
+budget and an eviction still happened, because the bar had less than 188.5pt free. macOS
+offers no way to ask how much room remains *before* claiming some, so nothing computed
+from our own state can avoid it.
+
+#### The one usable signal the probe did surface
+
+`windowFrame.minX − region.minX` tracks our width exactly: as the item grew 7pt, `minX`
+moved left 7pt and the gap shrank 7pt. That gap is **measurable headroom** — how much
+further the item could grow before reaching the region's left edge — and it is the
+quantity this whole design wanted and could not obtain.
+
+Caveat, and the reason it is a new design rather than a patch: the gap also contains any
+items sitting to our left, so it is "headroom plus leftward neighbours", not free space. A
+gap near zero does reliably mean we are at the wall.
+
+Two further facts worth keeping:
+
+- **`NSLog` is unusable for this.** Current macOS redacts its formatted string to
+  `<private>` in the unified log, so every field was unreadable. The diagnostic uses
+  `os.Logger` with an explicit `privacy: .public` per value. Read it with
+  `/usr/bin/log stream --predicate 'subsystem == "com.local.SpotifyMenuBar"' --info`.
+- **`maxWidthFraction -float 1.0` cannot force clipping**, contrary to what the probe
+  procedure originally claimed. The label length is bounded by real track metadata, not by
+  config; the item topped out at 351pt and stayed visible. Crowding the bar with other
+  apps is the only way to reproduce.
+
+#### What ships instead
+
+The computed ceiling alone, which sections 1–4 describe and which is complete on its own
+terms. `clipVerdict`, `applyWithFeedback` and `Clip` were never written. `Rung.next`
+remains as the seam should a future mechanism need it.
 
 ### 6. Re-evaluation triggers
 
