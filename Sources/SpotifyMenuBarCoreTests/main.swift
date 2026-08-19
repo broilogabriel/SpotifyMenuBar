@@ -252,4 +252,51 @@ expect(clamped.totalWidth <= max(200, Rung.full.chromeWidth(m)), true,
 expect((clamped.labelText ?? "").hasSuffix("…"), true,
        "a pinned rung too wide for the region degrades its text, not the whole item")
 
+// MARK: availableWidth
+
+// Real geometry, measured on the notched built-in display 2026-08-19: region 956..1728,
+// our item at x=1068 w=84 was the leftmost of 13 status items, leaving one 112pt free
+// block on the left. The last neighbour ends at 1730 — 2pt past region.maxX.
+let regionR = CGRect(x: 956, y: 1085, width: 772, height: 32)
+let us = CGRect(x: 1068, y: 1084, width: 84, height: 33)
+let neighbours = [us,
+                  CGRect(x: 1152, y: 1084, width: 34, height: 33),
+                  CGRect(x: 1586, y: 1084, width: 144, height: 33)]
+
+expectClose(Double(BarLayout.availableWidth(own: us, all: neighbours, region: regionR)),
+            196, "leftmost item: our own width plus the free block")
+
+// An item to our left eats the room we could grow into.
+let leftOfUs = CGRect(x: 1000, y: 1084, width: 68, height: 33)
+expectClose(Double(BarLayout.availableWidth(own: us, all: neighbours + [leftOfUs], region: regionR)),
+            128, "an item to our left reduces what we can claim")
+
+// The right-hand overhang must not change the answer — that is exactly why the occupied
+// block's LEFT edge is used instead of a sum of widths.
+let overhanging = Array(neighbours.dropLast()) + [CGRect(x: 1586, y: 1084, width: 999, height: 33)]
+expectClose(Double(BarLayout.availableWidth(own: us, all: overhanging, region: regionR)),
+            196, "a right-hand overhang does not change the result")
+
+expectClose(Double(BarLayout.availableWidth(own: us, all: [], region: regionR)),
+            196, "a degenerate empty list falls back to our own position")
+
+// An item overhanging the region's LEFT edge must not yield a negative width.
+expectClose(Double(BarLayout.availableWidth(own: us,
+                                            all: [CGRect(x: 100, y: 1084, width: 40, height: 33)],
+                                            region: regionR)),
+            0, "an item left of the region clamps to zero")
+
+// The property the whole design rests on: `available` must not move as our own width
+// changes, or the grow-in in Task 4 would oscillate forever.
+var availableStable = true
+for w in stride(from: CGFloat(24), through: 400, by: 4) {
+    // The item's right edge is fixed; width grows leftward, so minX moves left.
+    let grown = CGRect(x: us.maxX - w, y: us.minY, width: w, height: us.height)
+    let others = neighbours.filter { $0 != us } + [grown]
+    if abs(BarLayout.availableWidth(own: grown, all: others, region: regionR) - 196) > 0.001 {
+        availableStable = false
+    }
+}
+expect(availableStable, true, "available is invariant to our own width")
+
 summarize()

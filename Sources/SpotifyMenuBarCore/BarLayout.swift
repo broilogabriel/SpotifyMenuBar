@@ -50,6 +50,21 @@ public enum BarLayout {
         return min(max(regionWidth * f, floor), ceiling)
     }
 
+    /// How much width this item may occupy without displacing a neighbour.
+    ///
+    /// `own` is expected to be one of `all`, and that inclusion is load-bearing:
+    /// `available = own.width + gap`, so growing by X raises `own.width` by X while
+    /// lowering `gap` by X and the result does not move. That invariance is why the
+    /// grow-in converges in one step and needs no hysteresis, damping or timer.
+    ///
+    /// Derived from the occupied block's LEFT edge rather than a sum of widths, because
+    /// status items can overhang the region (measured: one ended 2pt past `region.maxX`)
+    /// and can sit with gaps between them — either makes a sum disagree with reality.
+    public static func availableWidth(own: CGRect, all: [CGRect], region: CGRect) -> CGFloat {
+        let leftEdge = all.map(\.minX).min() ?? own.minX
+        return max(own.width + (leftEdge - region.minX), 0)
+    }
+
     /// Shrink `s` until it measures within `budget`, appending an ellipsis. Returns
     /// nil when even one character plus the ellipsis overflows — the caller then
     /// drops the label instead of showing a bare "…".
