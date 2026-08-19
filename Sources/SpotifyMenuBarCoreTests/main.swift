@@ -230,13 +230,13 @@ expect(widthHolds, true, "resolve never exceeds the budget except at the floor")
 expect(labelHolds, true, "a labelled rung always carries non-empty text")
 
 expect(BarLayout.plan(track: "Bohemian Rhapsody", artist: "Queen", regionWidth: 772,
-                      fraction: 0.25, pin: nil, settings: st, metrics: m,
+                      fraction: 0.25, available: nil, pin: nil, settings: st, metrics: m,
                       measure: measure).rung, .compact, "plan with no pin matches the budget")
 expect(BarLayout.plan(track: "Bohemian Rhapsody", artist: "Queen", regionWidth: 772,
-                      fraction: 0.25, pin: .full, settings: st, metrics: m,
+                      fraction: 0.25, available: nil, pin: .full, settings: st, metrics: m,
                       measure: measure).rung, .full, "a pin overrides the budget's rung")
 expect(BarLayout.plan(track: "Advertisement", artist: "", regionWidth: 772,
-                      fraction: 0.25, pin: .full, settings: st, metrics: m,
+                      fraction: 0.25, available: nil, pin: .full, settings: st, metrics: m,
                       measure: measure).labelText, "Advertisement",
        "a pinned rung still collapses an empty artist")
 
@@ -298,5 +298,33 @@ for w in stride(from: CGFloat(24), through: 400, by: 4) {
     }
 }
 expect(availableStable, true, "available is invariant to our own width")
+
+// MARK: plan — measured free space as a second ceiling
+
+// available (100) is tighter than the fraction (0.25 x 772 = 193), so it wins: a 100pt
+// budget leaves 26pt of label room, below minLabelWidth, so the ladder drops to icons.
+expect(BarLayout.plan(track: "Bohemian Rhapsody", artist: "Queen", regionWidth: 772,
+                      fraction: 0.25, available: 100, pin: nil, settings: st, metrics: m,
+                      measure: measure).rung, .icons,
+       "measured free space caps the fraction")
+
+// An unmeasurable bar must behave exactly as before this change.
+expect(BarLayout.plan(track: "Bohemian Rhapsody", artist: "Queen", regionWidth: 772,
+                      fraction: 0.25, available: nil, pin: nil, settings: st, metrics: m,
+                      measure: measure).rung, .compact,
+       "an unmeasurable bar falls back to the fraction alone")
+
+// A pin is the user overruling the safety margin — the whole point of the Display
+// submenu — so it ignores the measurement entirely.
+expect(BarLayout.plan(track: "Bohemian Rhapsody", artist: "Queen", regionWidth: 772,
+                      fraction: 0.25, available: 30, pin: .full, settings: st, metrics: m,
+                      measure: measure).rung, .full,
+       "a pinned rung ignores measured free space")
+
+// The floor still wins: the item always renders something.
+expect(BarLayout.plan(track: "Bohemian Rhapsody", artist: "Queen", regionWidth: 772,
+                      fraction: 0.25, available: 5, pin: nil, settings: st, metrics: m,
+                      measure: measure).rung, .playPause,
+       "an absurdly small measurement still renders the floor")
 
 summarize()

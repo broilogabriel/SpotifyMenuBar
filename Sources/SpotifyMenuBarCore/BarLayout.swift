@@ -167,16 +167,29 @@ public enum BarLayout {
 
     /// The whole layout decision: resolve against the budget, then let a user pin
     /// override the rung. One place, so the two callers cannot drift.
+    ///
+    /// `available` is measured free space (nil when unmeasurable). It is a *harder*
+    /// ceiling than `fraction`: exceeding it makes macOS hide a neighbouring app's icon,
+    /// which is the bug this parameter exists to prevent.
     public static func plan(track: String, artist: String, regionWidth: CGFloat,
-                            fraction: Double, pin pinned: Rung?, settings: Settings,
-                            metrics: Rung.Metrics,
+                            fraction: Double, available: CGFloat?, pin pinned: Rung?,
+                            settings: Settings, metrics: Rung.Metrics,
                             measure: (String) -> CGFloat) -> Resolution {
         if let pinned {
+            // A pin deliberately overrides the budget AND the measurement: the user is
+            // overruling the safety margin, and capping it here would make the Display
+            // submenu a hint rather than a setting. This is the one path that can still
+            // displace a neighbour.
             return pin(pinned, track: track, artist: artist, regionWidth: regionWidth,
                        settings: settings, metrics: metrics, measure: measure)
         }
-        return resolve(track: track, artist: artist,
-                       budget: budget(regionWidth: regionWidth, fraction: fraction, metrics: metrics),
+        var b = budget(regionWidth: regionWidth, fraction: fraction, metrics: metrics)
+        if let available {
+            // Floored at the smallest rung: the item must always render something, even
+            // when there is genuinely no room.
+            b = max(min(b, available), Rung.playPause.chromeWidth(metrics))
+        }
+        return resolve(track: track, artist: artist, budget: b,
                        settings: settings, metrics: metrics, measure: measure)
     }
 }

@@ -402,14 +402,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // Route the placeholder through the same tested plan rather than a second,
             // hand-derived ladder that could drift from it.
             let placeholder = BarLayout.plan(track: "♪", artist: "", regionWidth: regionWidth,
-                                             fraction: fraction, pin: pinned, settings: settings,
+                                             fraction: fraction, available: measuredAvailable(),
+                                             pin: pinned, settings: settings,
                                              metrics: metrics, measure: measureLabel)
             apply(placeholder, fullTitle: nil)
             return
         }
 
         let resolved = BarLayout.plan(track: track, artist: artist, regionWidth: regionWidth,
-                                      fraction: fraction, pin: pinned, settings: settings,
+                                      fraction: fraction, available: measuredAvailable(),
+                                      pin: pinned, settings: settings,
                                       metrics: metrics, measure: measureLabel)
         // Ads and untagged local files report an empty artist; an unconditional
         // separator would render a stranded "Track – ".
