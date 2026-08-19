@@ -190,7 +190,7 @@ expect(Settings.displayMode(d), .auto, "unset displayMode is auto")
 
 // MARK: BarLayout.pin
 
-// A generous region so these checks exercise the label composition, not the new A1
+// A generous region so these checks exercise the label composition, not the cached
 // ceiling — that ceiling gets its own checks below.
 let roomyRegion: CGFloat = 1000
 
@@ -216,7 +216,7 @@ expect(BarLayout.pin(.full, track: "Bohemian Rhapsody", artist: "Queen", regionW
                      settings: st, metrics: m, measure: measure).rung,
        .full, "pin returns the rung it was asked for")
 
-// MARK: BarLayout.plan (A3/A4) — the resolve-then-pin composition, tested where it lives
+// MARK: BarLayout.plan — the resolve-then-pin composition, tested where it lives
 
 var widthHolds = true, labelHolds = true
 for step in 0...400 {
@@ -240,8 +240,8 @@ expect(BarLayout.plan(track: "Advertisement", artist: "", regionWidth: 772,
                       measure: measure).labelText, "Advertisement",
        "a pinned rung still collapses an empty artist")
 
-// A1's ceiling: a pinned rung is bounded by the region, so an absurd maxTrack cannot make
-// the item run away. Deleting the clamp must fail a check, not pass silently.
+// The region-width clamp: a pinned rung is bounded by the region, so an absurd maxTrack
+// cannot make the item run away. Deleting the clamp must fail a check, not pass silently.
 let hugeSettings = Settings(maxTrack: 300, maxArtist: 300, prevRestartSecs: 3)
 let clamped = BarLayout.pin(.full, track: String(repeating: "A", count: 300),
                             artist: String(repeating: "B", count: 300),
@@ -330,5 +330,28 @@ expect(BarLayout.plan(track: "Bohemian Rhapsody", artist: "Queen", regionWidth: 
                       fraction: 0.25, available: 5, pin: nil, settings: st, metrics: m,
                       measure: measure).rung, .playPause,
        "an absurdly small measurement still renders the floor")
+
+// MARK: BarLayout.statusWindows
+
+// primaryMaxY chosen to match the notched built-in display's frame used above.
+let primaryMaxY: CGFloat = 1117
+
+// A window on the region's own screen is kept, converted from CG's top-left origin.
+expect(BarLayout.statusWindows(bounds: [(x: 1068, y: 0, width: 84, height: 33)],
+                               region: regionR, primaryMaxY: primaryMaxY).count,
+       1, "a window on the region's own screen is kept")
+expectClose(Double(BarLayout.statusWindows(bounds: [(x: 1068, y: 0, width: 84, height: 33)],
+                                           region: regionR, primaryMaxY: primaryMaxY)[0].minY),
+            1084, "CG y=0 h=33 with primaryMaxY=1117 converts to NS y=1084")
+
+// A window at the same X but on a stacked display (a different Y) must be rejected —
+// X alone cannot tell the two apart.
+expect(BarLayout.statusWindows(bounds: [(x: 1068, y: 2000, width: 84, height: 33)],
+                               region: regionR, primaryMaxY: primaryMaxY).isEmpty,
+       true, "same X but a different Y (stacked display) is rejected")
+
+// An empty input yields an empty result.
+expect(BarLayout.statusWindows(bounds: [], region: regionR, primaryMaxY: primaryMaxY).isEmpty,
+       true, "an empty input yields an empty result")
 
 summarize()

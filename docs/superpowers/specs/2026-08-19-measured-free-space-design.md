@@ -58,8 +58,9 @@ Two properties of the result that shape the design:
 - **Take our own rect from `NSWindow.frame` instead**, and use `CGWindowList` purely for the
   collection of other items' `minX`. `X` and `width` are directly comparable between the two
   coordinate systems, which is all `availableWidth` needs. Our own window still appears in
-  the list as a Control-Center-owned entry at the same `x`/`width`, so the invariance
-  argument in section 3 is unaffected.
+  the list as a Control-Center-owned entry at the same `x`/`width` — numerically close but
+  not identical (observed 1pt apart) — which is harmless because `availableWidth` only reads
+  `own.width` and the minimum `minX`, both re-queried fresh each call.
 - **Do NOT match on frames.** `CGWindowBounds` uses a **top-left** origin while
   `NSWindow.frame` uses **bottom-left**; a test window at `NSWindow` y=300 reported
   `CGWindow` Y=793. `X` and `Width` agree, `Y` does not, so frame equality silently never
@@ -88,7 +89,7 @@ Lives beside the existing `currentRegion()` in `main.swift`, because it queries 
 server. Returns nil when our own window is not yet placed.
 
 ```
-func statusItemFrames() -> (own: CGRect, all: [CGRect])?
+func statusItemFrames() -> (own: CGRect, all: [CGRect], region: CGRect)?
     region  = currentRegion()
     ownFrame = statusItem.button?.window?.frame
     nil unless ownFrame horizontally intersects region      // not yet placed
@@ -106,7 +107,7 @@ status window sits outside the bar entirely (observed `{{0, -33}, {84, 33}}`).
 
 ```
 BarLayout.availableWidth(own: CGRect, all: [CGRect], region: CGRect) -> CGFloat
-    let leftEdge = all.map(\.minX).min() ?? region.maxX
+    let leftEdge = all.map(\.minX).min() ?? own.minX
     return max(own.width + (leftEdge - region.minX), 0)
 ```
 
@@ -259,7 +260,7 @@ would have been diagnosed in the first place.
 | `availableWidth` arithmetic — leftmost derivation, own-inclusion, overhang, empty `all`, clamping at 0 | `swift run SpotifyMenuBarCoreTests`, synthetic `CGRect`s |
 | ~~The stability property~~ | **Removed — the property is false (section 3).** The Task 1 sweep that asserts a constant 196 checks the *arithmetic* under a synthetic packed-block model, which is fine as an arithmetic check, but it must not be read as evidence about real bar behavior. |
 | Budget composition — measurement as the harder ceiling; pin exempt | Core checks over `plan` |
-| Compiles / nothing regressed | `swift build`, existing 83 checks unmodified |
+| Compiles / nothing regressed | `swift build`, existing 93 checks unmodified (one check's message was deliberately reworded when the invariance property it asserted was refuted; the assertion and swept values did not change) |
 | Bundle still assembles | `./build-app.sh` |
 | The reported bug is fixed | manual: crowd the bar, launch the app, confirm **no** neighbour icon disappears — the check that matters. `debugLayout` shows `available=` next to `requested=`; on a crowded bar expect the item to settle at `icons` or `playPause`, which is the honest cost of never evicting |
 | The ceiling does not ratchet | manual: with `debugLayout` on, watch across several track changes that `available=` stays constant (it is cached, not re-read) and the rung does not creep upward |
@@ -268,8 +269,7 @@ would have been diagnosed in the first place.
 ## Documentation to update
 
 - **AGENTS.md** — a new "do not regress" entry: the automatic path must never exceed
-  measured `available`, and why (it displaced NordVPN's icon); that `available` is invariant
-  to our own width and that is what makes the grow-in terminate; that the pin is the
+  measured `available`, and why (it displaced NordVPN's icon); that the pin is the
   deliberate exception. Also that `CGWindowList` bounds need no permission but titles do.
 - **README.md** — the space behavior is now measured rather than a fixed share; the
   known-limitation wording about a crowded bar should narrow to the pinned case only.

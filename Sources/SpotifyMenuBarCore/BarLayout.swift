@@ -50,19 +50,38 @@ public enum BarLayout {
         return min(max(regionWidth * f, floor), ceiling)
     }
 
-    /// How much width this item may occupy without displacing a neighbour.
+    /// How much width this item may occupy without displacing a neighbour, in **window**
+    /// widths (see `measuredAvailable()`, which converts to a length budget).
     ///
-    /// `own` is expected to be one of `all`, and that inclusion is load-bearing:
-    /// `available = own.width + gap`, so growing by X raises `own.width` by X while
-    /// lowering `gap` by X and the result does not move. That invariance is why the
-    /// grow-in converges in one step and needs no hysteresis, damping or timer.
+    /// `own` must be one of `all`. The result is **NOT invariant to our own width** — an
+    /// earlier design claimed it was and was refuted by measurement: widening evicts
+    /// leftward neighbours, and their vacated space reads back as a larger gap (91pt at
+    /// 40pt wide versus 437pt at 282pt wide, on the same bar). Only a reading taken at the
+    /// minimum rung is honest, which is why `remeasureCeiling()` shrinks first. See
+    /// AGENTS.md decision #19.
     ///
     /// Derived from the occupied block's LEFT edge rather than a sum of widths, because
     /// status items can overhang the region (measured: one ended 2pt past `region.maxX`)
-    /// and can sit with gaps between them — either makes a sum disagree with reality.
+    /// and can sit with gaps between them. A right-edge clamp is unnecessary here —
+    /// `plan` already clamps the budget to `regionWidth`.
     public static func availableWidth(own: CGRect, all: [CGRect], region: CGRect) -> CGFloat {
         let leftEdge = all.map(\.minX).min() ?? own.minX
         return max(own.width + (leftEdge - region.minX), 0)
+    }
+
+    /// Keep only the status-item rects that belong to `region`, converting from
+    /// CGWindowBounds' top-left origin to AppKit's bottom-left.
+    ///
+    /// Both axes must intersect: X alone cannot tell two stacked displays apart, which
+    /// shipped as a real defect once.
+    public static func statusWindows(bounds: [(x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat)],
+                                     region: CGRect, primaryMaxY: CGFloat) -> [CGRect] {
+        bounds.compactMap { b in
+            let rect = CGRect(x: b.x, y: primaryMaxY - (b.y + b.height), width: b.width, height: b.height)
+            guard rect.maxX > region.minX, rect.minX < region.maxX,
+                  rect.maxY > region.minY, rect.minY < region.maxY else { return nil }
+            return rect
+        }
     }
 
     /// Shrink `s` until it measures within `budget`, appending an ellipsis. Returns

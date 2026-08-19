@@ -75,8 +75,11 @@ expectClose(Double(BarLayout.availableWidth(own: us,
                                             region: regionR)),
             0, "an item left of the region clamps to zero")
 
-// The property the whole design rests on: `available` must not move as our own width
-// changes, or the grow-in in Task 4 would oscillate forever.
+// Arithmetic only: with a fixed right edge and a fixed set of neighbours, widening trades
+// gap for width one-for-one. Real bars do NOT behave this way — macOS hides leftward
+// neighbours as we grow, so a live `available` reading rises with our own width (measured:
+// 91pt at 40pt wide, 437pt at 282pt wide). That is why the ceiling is measured only at the
+// minimum rung. Do not cite this sweep as evidence of live invariance.
 var availableStable = true
 for w in stride(from: CGFloat(24), through: 400, by: 4) {
     // The item's right edge is fixed; width grows leftward, so minX moves left.
@@ -86,7 +89,8 @@ for w in stride(from: CGFloat(24), through: 400, by: 4) {
         availableStable = false
     }
 }
-expect(availableStable, true, "available is invariant to our own width")
+expect(availableStable, true,
+       "the arithmetic trades gap for width one-for-one under a fixed packed block")
 ```
 
 - [ ] **Step 2: Run the checks to verify they fail**
@@ -99,16 +103,20 @@ Expected: FAIL to compile — `error: type 'BarLayout' has no member 'availableW
 Add to `BarLayout` in `Sources/SpotifyMenuBarCore/BarLayout.swift`, after `budget`:
 
 ```swift
-    /// How much width this item may occupy without displacing a neighbour.
+    /// How much width this item may occupy without displacing a neighbour, in **window**
+    /// widths (see `measuredAvailable()`, which converts to a length budget).
     ///
-    /// `own` is expected to be one of `all`, and that inclusion is load-bearing:
-    /// `available = own.width + gap`, so growing by X raises `own.width` by X while
-    /// lowering `gap` by X and the result does not move. That invariance is why the
-    /// grow-in converges in one step and needs no hysteresis, damping or timer.
+    /// `own` must be one of `all`. The result is **NOT invariant to our own width** — an
+    /// earlier design claimed it was and was refuted by measurement: widening evicts
+    /// leftward neighbours, and their vacated space reads back as a larger gap (91pt at
+    /// 40pt wide versus 437pt at 282pt wide, on the same bar). Only a reading taken at the
+    /// minimum rung is honest, which is why `remeasureCeiling()` shrinks first. See
+    /// AGENTS.md decision #19.
     ///
     /// Derived from the occupied block's LEFT edge rather than a sum of widths, because
     /// status items can overhang the region (measured: one ended 2pt past `region.maxX`)
-    /// and can sit with gaps between them — either makes a sum disagree with reality.
+    /// and can sit with gaps between them. A right-edge clamp is unnecessary here —
+    /// `plan` already clamps the budget to `regionWidth`.
     public static func availableWidth(own: CGRect, all: [CGRect], region: CGRect) -> CGFloat {
         let leftEdge = all.map(\.minX).min() ?? own.minX
         return max(own.width + (leftEdge - region.minX), 0)
@@ -344,6 +352,10 @@ minimum width, where nothing has been evicted yet and the reading is therefore h
 - Produces: `private var barCeiling: CGFloat?`, `private var measuringCeiling: Bool`, `private var ceilingAttempts: Int`, `private var pendingMeasure: DispatchWorkItem?`, `func remeasureCeiling()`, `@objc func barContentsMaybeChanged()`
 
 - [ ] **Step 0: Correct a check message that asserts the refuted property**
+
+Superseded by the fix now folded into Task 1 Step 1's code block above, which already
+writes the corrected comment and message below — nothing left to change on a fresh
+execution of this plan. Left here for the historical record of why Task 1 reads as it does.
 
 `Sources/SpotifyMenuBarCoreTests/main.swift` contains a check whose message is now false in
 the way that matters most — it appears in test output:

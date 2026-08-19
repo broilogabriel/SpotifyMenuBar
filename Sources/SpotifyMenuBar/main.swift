@@ -72,6 +72,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var barCeiling: CGFloat?
     private var measuringCeiling = false
     private var ceilingAttempts = 0
+    // Consecutive full retry cycles that never found a measurement. After the second,
+    // `relayout` stops treating nil as "not yet known" and falls back to fraction-only —
+    // the documented degraded mode — instead of retrying forever and rendering a
+    // permanent bare play button in the meantime.
+    private var ceilingGiveUps = 0
     // A trigger that lands while a cycle is already running carries newer information
     // than the cycle it can't interrupt; remembered so the cycle re-enters (via the
     // coalescer) once it finishes, instead of the trigger being silently dropped.
@@ -217,6 +222,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// since `lastTrack` already has what it needs — so the region is corrected right
     /// away rather than waiting on the 0.3s coalescer below.
     @objc func screenChanged() {
+        // A ceiling measured for a different region is meaningless. Gate on an actual
+        // change so Space switches — which share this selector but never move the
+        // region — cost no blink.
+        let previous = lastRegion
+        if currentRegion() != previous { barCeiling = nil }
         relayout(track: lastTrack.track, artist: lastTrack.artist)
         barContentsMaybeChanged()
     }
@@ -232,11 +242,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// items appear over several seconds, so expect a handful of sequential cycles at
     /// login, not one.
     @objc func barContentsMaybeChanged() {
-        if let last = lastCeilingMeasurement, Date().timeIntervalSince(last) < 3 { return }
+        // Never drop a trigger — it carries newer information than whatever is cached.
+        // Defer it to the end of the rate-limit window instead.
+        var delay = 0.3
+        if let last = lastCeilingMeasurement {
+            delay = max(delay, 3 - Date().timeIntervalSince(last))
+        }
         pendingMeasure?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.remeasureCeiling() }
         pendingMeasure = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     // MARK: - Launch at login (SMAppService, macOS 13+)
@@ -332,10 +347,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     ///
     /// Returns nil while our item is not yet placed. An unplaced status window sits
     /// outside the bar region entirely (observed: `{{0, -33}, {84, 33}}`), which is the
-    /// "cannot measure yet" signal Task 4 consumes.
+    /// "cannot measure yet" signal `attemptCeilingMeasurement()`'s bounded retry consumes.
     ///
     /// Also returns the region so callers don't call `currentRegion()` again — it caches
     /// into `lastRegion`, so a second call would be a redundant side-effecting one.
+    ///
+    /// Only reads `CGWindowListCopyWindowInfo` and `window.frame`; the CG->AppKit Y
+    /// conversion and the two-axis region filter are pure arithmetic and live in
+    /// `BarLayout.statusWindows`, where a check can reach them.
     func statusItemFrames() -> (own: CGRect, all: [CGRect], region: CGRect)? {
         guard let window = statusItem.button?.window else { return nil }
         let region = currentRegion()
@@ -348,21 +367,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let own = CGRect(x: ownFrame.minX, y: region.minY,
                          width: ownFrame.width, height: region.height)
         // CGWindowBounds is global with the origin at the TOP-left of the primary display;
-        // NSScreen coordinates put it at the BOTTOM-left. Convert before comparing, or a
-        // window on another display whose X range overlaps this one's gets counted.
+        // NSScreen coordinates put it at the BOTTOM-left. BarLayout.statusWindows converts
+        // before comparing, or a window on another display whose X range overlaps this
+        // one's gets counted.
         let primaryMaxY = NSScreen.screens.first?.frame.maxY ?? region.maxY
-        var all: [CGRect] = []
-        for entry in raw {
+        let bounds: [(x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat)] = raw.compactMap { entry in
             guard (entry[kCGWindowLayer as String] as? Int) == statusLayer,
                   let b = entry[kCGWindowBounds as String] as? [String: CGFloat],
                   let x = b["X"], let w = b["Width"],
-                  let cgY = b["Y"], let h = b["Height"] else { continue }
-            let rect = CGRect(x: x, y: primaryMaxY - (cgY + h), width: w, height: h)
-            // Both axes must intersect: X alone cannot tell two stacked displays apart.
-            guard rect.maxX > region.minX, rect.minX < region.maxX,
-                  rect.maxY > region.minY, rect.minY < region.maxY else { continue }
-            all.append(rect)
+                  let cgY = b["Y"], let h = b["Height"] else { return nil }
+            return (x: x, y: cgY, width: w, height: h)
         }
+        let all = BarLayout.statusWindows(bounds: bounds, region: region, primaryMaxY: primaryMaxY)
         guard !all.isEmpty else { return nil }
         return (own, all, region)
     }
@@ -370,7 +386,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Measured free space, or nil when the item is not yet placed.
     func measuredAvailable() -> CGFloat? {
         guard let f = statusItemFrames() else { return nil }
-        return BarLayout.availableWidth(own: f.own, all: f.all, region: f.region)
+        let windowSpace = BarLayout.availableWidth(own: f.own, all: f.all, region: f.region)
+        // The ceiling is spent as `statusItem.length`, but it is measured in window widths:
+        // macOS grants a window 16pt wider than the requested length (measured at every
+        // rung: 24->40, 68->84, 187.5->204, 266->282). Without this conversion every
+        // ceiling is over-spent by that padding and the guarantee is off by 16pt.
+        let padding = max(f.own.width - statusItem.length, 0)
+        return max(windowSpace - padding, 0)
     }
 
     // Measured with a real NSTextField, not a bare NSString: the field's cell adds ~4pt
@@ -465,7 +487,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Deliberately does NOT re-measure. Ordinary relayouts reuse the cached ceiling,
         // which is what keeps the shrink-and-regrow blink rare and removes any per-track
         // ratchet. Only `remeasureCeiling()` re-reads it.
-        let available = barCeiling ?? Rung.playPause.chromeWidth(metrics)
+        //
+        // nil after repeated failures means "cannot measure here" -> fraction-only, the
+        // documented degraded mode. Before that, nil means "not yet measured" -> stay
+        // minimal so we cannot evict anyone while we find out.
+        let available: CGFloat? = barCeiling
+            ?? (ceilingGiveUps >= 2 ? nil : Rung.playPause.chromeWidth(metrics))
 
         guard !track.isEmpty else {
             // Route the placeholder through the same tested plan rather than a second,
@@ -527,6 +554,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.barCeiling = measured
                 self.lastCeilingMeasurement = Date()
                 self.measuringCeiling = false
+                self.ceilingGiveUps = 0
                 self.relayout(track: self.lastTrack.track, artist: self.lastTrack.artist)
                 if self.remeasureQueued {
                     self.remeasureQueued = false
@@ -535,13 +563,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             } else if self.ceilingAttempts < 6 {
                 self.attemptCeilingMeasurement()
             } else {
-                // Unknown ceiling means the item is stuck minimal, and nothing in the
-                // playback path re-measures. Try again later rather than stranding it.
                 self.measuringCeiling = false
                 self.remeasureQueued = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
-                    self?.barContentsMaybeChanged()
+                self.ceilingGiveUps += 1
+                if self.ceilingGiveUps < 2 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+                        self?.barContentsMaybeChanged()
+                    }
                 }
+                // Past that, stop retrying and let `relayout` use the fraction alone —
+                // the documented degraded mode — rather than a permanent 24pt stub.
+                self.relayout(track: self.lastTrack.track, artist: self.lastTrack.artist)
             }
         }
     }
