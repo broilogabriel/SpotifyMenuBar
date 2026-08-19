@@ -343,6 +343,34 @@ minimum width, where nothing has been evicted yet and the reading is therefore h
 - Consumes: `measuredAvailable() -> CGFloat?` (Task 2), `BarLayout.plan(…available:…)` (Task 3), `relayout(track:artist:)`, `lastTrack`, `Rung.playPause.chromeWidth(_:)`.
 - Produces: `private var barCeiling: CGFloat?`, `private var measuringCeiling: Bool`, `private var ceilingAttempts: Int`, `private var pendingMeasure: DispatchWorkItem?`, `func remeasureCeiling()`, `@objc func barContentsMaybeChanged()`
 
+- [ ] **Step 0: Correct a check message that asserts the refuted property**
+
+`Sources/SpotifyMenuBarCoreTests/main.swift` contains a check whose message is now false in
+the way that matters most — it appears in test output:
+
+```swift
+expect(availableStable, true, "available is invariant to our own width")
+```
+
+The check itself is fine: it verifies the *arithmetic* under a synthetic packed block where
+the right edge is held fixed. Real bars do not behave that way. Reword it, and add a comment
+above the sweep so no one reads it as evidence about live behavior:
+
+```swift
+// Arithmetic only: with a fixed right edge and a fixed set of neighbours, widening trades
+// gap for width one-for-one. Real bars do NOT behave this way — macOS hides leftward
+// neighbours as we grow, so a live `available` reading rises with our own width (measured:
+// 91pt at 40pt wide, 437pt at 282pt wide). That is why the ceiling is measured only at the
+// minimum rung. Do not cite this sweep as evidence of live invariance.
+```
+
+```swift
+expect(availableStable, true,
+       "the arithmetic trades gap for width one-for-one under a fixed packed block")
+```
+
+Do not change the assertion or the swept values — only the message and the comment.
+
 - [ ] **Step 1: Add the ceiling state**
 
 Add to `AppDelegate`'s property block:
