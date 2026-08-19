@@ -250,6 +250,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return lastRegion
     }
 
+    /// The status-item windows currently on screen, and which one is ours.
+    ///
+    /// `CGWindowListCopyWindowInfo` needs **no** Screen Recording permission for bounds —
+    /// only window titles (`kCGWindowName`) are gated. Every status item reports owner
+    /// "Control Centre" because macOS hosts them in that process, so ours is identified by
+    /// `windowNumber`, which corresponds exactly to `kCGWindowNumber`.
+    ///
+    /// Returns nil until our window is committed to the window server; before that it is
+    /// simply absent from the list, which is the "cannot measure yet" case Task 4 handles.
+    func statusItemFrames() -> (own: CGRect, all: [CGRect])? {
+        guard let window = statusItem.button?.window else { return nil }
+        guard let raw = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID)
+                as? [[String: Any]] else { return nil }
+        let ourNumber = window.windowNumber
+        let statusLayer = Int(CGWindowLevelForKey(.statusWindow))
+        let region = currentRegion()
+        var own: CGRect?
+        var all: [CGRect] = []
+        for entry in raw {
+            guard (entry[kCGWindowLayer as String] as? Int) == statusLayer,
+                  let b = entry[kCGWindowBounds as String] as? [String: CGFloat],
+                  let x = b["X"], let w = b["Width"] else { continue }
+            // CGWindowBounds is top-left origin, NSWindow.frame is bottom-left, so only X
+            // and Width are comparable. Synthesise y/height from the region rather than
+            // trusting a value we cannot compare.
+            let rect = CGRect(x: x, y: region.minY, width: w, height: region.height)
+            // Keep only items on this screen's status area (multi-display).
+            guard rect.maxX > region.minX, rect.minX < region.maxX else { continue }
+            all.append(rect)
+            if (entry[kCGWindowNumber as String] as? Int) == ourNumber { own = rect }
+        }
+        guard let own else { return nil }
+        return (own, all)
+    }
+
+    /// Measured free space, or nil when the item is not yet placed.
+    func measuredAvailable() -> CGFloat? {
+        guard let frames = statusItemFrames() else { return nil }
+        return BarLayout.availableWidth(own: frames.own, all: frames.all, region: currentRegion())
+    }
+
     // Measured with a real NSTextField, not a bare NSString: the field's cell adds ~4pt
     // of inset, and if the resolver's model disagrees with the label's the clamp in
     // resize(to:) silently crops the first glyph.
@@ -321,6 +362,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             + " region=\(NSStringFromRect(currentRegion()))"
             + " visible=\(statusItem.isVisible ? "Y" : "N")"
             + " windowFrame=\(w.map { NSStringFromRect($0.frame) } ?? "nil")"
+            + " available=\(measuredAvailable().map { String(format: "%.1f", $0) } ?? "nil")"
         Self.layoutLog.notice("\(msg, privacy: .public)")
     }
 
