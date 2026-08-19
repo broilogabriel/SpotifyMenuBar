@@ -5,9 +5,11 @@ before editing. See `README.md` for user-facing docs.
 
 ## What this project is
 
-A single-file macOS menu-bar app (AppKit, SwiftPM) that controls the **local Spotify
-desktop app**. The entire program is `Sources/SpotifyMenuBar/main.swift` (~130 lines).
-Keep it small and dependency-free — that is a feature, not a limitation.
+A macOS menu-bar app (AppKit, SwiftPM) that controls the **local Spotify desktop
+app**. The AppKit app is one file, `Sources/SpotifyMenuBar/main.swift`; pure logic
+(`Config`, `Settings`, `trunc`, `Rung`, `DisplayMode`, `BarLayout`) lives in the
+`SpotifyMenuBarCore` library target so it can be exercised by the test runner. Keep it
+small and dependency-free — that is a feature, not a limitation.
 
 ## Build, run, verify
 
@@ -20,7 +22,12 @@ swift run        # launches the menu-bar app in the FOREGROUND (blocks the termi
 - **Always `swift build` after editing** to confirm it compiles.
 - **Do NOT run `swift run` from an automated/non-interactive context** — it is a
   GUI app that runs until killed and will block. Let the human run it.
-- There is no test suite; verification is "compiles" + the human running it.
+- **`swift run SpotifyMenuBarCoreTests`** runs the checks for `SpotifyMenuBarCore`
+  (exit 0 = pass). This is safe non-interactively — it exits on its own, unlike
+  `swift run`, which launches the blocking GUI app.
+- There is no `XCTest`/`swift-testing` and **`swift test` does not work**: this machine
+  has no Xcode, and the Command Line Tools toolchain ships neither module. That is why
+  the tests are a plain executable with a small `expect`/`summarize` harness.
 
 ## Hard-won design decisions — do not regress these
 
@@ -67,6 +74,32 @@ will likely reintroduce the bug noted.
     "Play or pause", "Next". The label field is already readable.
 13. **`Settings.current()` clamps UserDefaults values** (`maxTrack`/`maxArtist` ≥ 1,
     `prevRestartSecs` ≥ 0) so a bad `defaults write` can't break layout.
+14. **Never request more width than the budget allows.** `resize(to:)` clamps
+    `statusItem.length` to a fraction (`maxWidthFraction`, default 0.25) of the
+    status-item region. Before this, `length` came straight from `fittingSize`, and a
+    long track title could claim ~45% of the region on a notched display — macOS
+    responds by *hiding* items, so the item took its neighbours down with it.
+15. **The rung ladder has a floor.** `full → compact → icons → playPause`; the item
+    always renders something. At `playPause` the dropped prev/next controls appear in
+    the right-click menu, so no function becomes unreachable.
+16. **Clip detection is NOT implemented, on purpose.** macOS exposes no API for
+    remaining menu-bar space, and which observable field changes when it clips a status
+    item is undocumented. The shipped behavior is the computed ceiling alone, which the
+    design sanctions as a complete outcome. `debugLayout` is the instrumentation for
+    measuring it; the probe and the design for the corrective feedback loop live in
+    `docs/superpowers/specs/2026-08-18-menu-bar-space-adaptation-design.md`. If it is ever
+    built, `clipVerdict` must stay **three-state** — `.unknown` means "no usable signal",
+    and the caller then trusts the budget alone — and must compare the granted window
+    width against `statusItem.length`, never against `Resolution.totalWidth`, which
+    `resize(to:)` deliberately sets a few points below at labelled rungs.
+17. **`BarLayout.labelText(for:track:artist:settings:)` is the ONLY place a bar label
+    string is composed.** `resolve` and `pin` both route through it. An empty artist
+    (Spotify ads, untagged local files) must collapse to the track alone — a stranded
+    `"Track – "` shipped twice because a second composer existed. Do not add a third.
+18. **Tooltip and `accessibilityLabel` carry the full title on the host button**, not
+    only on the label, because at `icons` and `playPause` the label is hidden and they
+    become the only way to know what is playing. Setting them on the label alone
+    silently breaks decision #12 at reduced rungs.
 
 ## Spotify integration facts
 
@@ -142,7 +175,10 @@ When writing review comments (PR reviews, inline comments), follow
   Runtime overrides are read from `UserDefaults` via `Settings.current()`.
 - Match the existing terse, comment-the-why style. Comments explain *why* a
   non-obvious choice exists (usually a bug it prevents), not *what* the code does.
-- Keep it a single file unless it grows substantially.
+- The AppKit app is one file (`Sources/SpotifyMenuBar/main.swift`). Pure logic lives in
+  `Sources/SpotifyMenuBarCore/` so it can be exercised by the test runner — the split
+  exists for that reason alone, so don't move AppKit code there. **`SpotifyMenuBarCore`
+  must never `import AppKit`.**
 
 ## Design docs (`docs/superpowers/`)
 

@@ -60,6 +60,11 @@ Then **right-click the menu-bar item → Launch at Login** to toggle it on (a
 checkmark shows the current state). This uses Apple's `SMAppService` (macOS 13+);
 the toggle also appears under **System Settings → General → Login Items**.
 
+The same right-click menu has a **Display** submenu to pin how much the item shows:
+**Auto** (the default — fits as much as the menu bar has room for), **Track and
+Artist**, **Track Only**, **Controls Only**, or **Play/Pause Only**. The chosen mode
+is checked in the submenu and persists across relaunches.
+
 Notes:
 - The `.app` is a menu-bar agent (`LSUIElement`) — no Dock icon, no app menu.
 - It's **ad-hoc signed**, so it runs locally without notarization. Re-running
@@ -68,8 +73,8 @@ Notes:
 
 ## Configuration
 
-Defaults live in the `Config` enum at the top of
-`Sources/SpotifyMenuBar/main.swift`. You can override them at runtime — no
+Defaults live in the `Config` enum in
+`Sources/SpotifyMenuBarCore/Config.swift`. You can override them at runtime — no
 rebuild, no restart — with `defaults write`; changes apply on the next playback
 change:
 
@@ -77,6 +82,9 @@ change:
 defaults write com.local.SpotifyMenuBar maxTrack -int 24
 defaults write com.local.SpotifyMenuBar maxArtist -int 24
 defaults write com.local.SpotifyMenuBar prevRestartSecs -float 2.5
+defaults write com.local.SpotifyMenuBar maxWidthFraction -float 0.20
+defaults write com.local.SpotifyMenuBar displayMode -string compact
+defaults write com.local.SpotifyMenuBar debugLayout -bool YES
 ```
 
 | Key | Type | Default | Meaning |
@@ -84,6 +92,9 @@ defaults write com.local.SpotifyMenuBar prevRestartSecs -float 2.5
 | `maxTrack` | Int | `18` | Max characters of the track name before truncation (`…`) |
 | `maxArtist` | Int | `18` | Max characters of the artist name |
 | `prevRestartSecs` | Double | `3.0` | Below this playback position, "back" goes to the previous track; above it, "back" restarts the current track |
+| `maxWidthFraction` | Double | `0.25` | Largest share of the menu bar's status-item region this item may claim. Clamped to 0.10–1.0. Lower it if the item crowds your bar. |
+| `displayMode` | String | `auto` | Pins the layout: `auto`, `full`, `compact`, `icons`, `playPause`. Also available on the right-click **Display** submenu. |
+| `debugLayout` | Bool | `false` | Opt-in diagnostic: logs the resolved budget, rung, region and window frame via `NSLog`. |
 
 Remove an override with `defaults delete com.local.SpotifyMenuBar maxTrack`.
 
@@ -110,11 +121,15 @@ Remove an override with `defaults delete com.local.SpotifyMenuBar maxTrack`.
 
 ```
 SpotifyMenuBar/
-├── Package.swift                     # SwiftPM executable, macOS 13+
-├── Info.plist                        # bundle metadata (LSUIElement, usage strings)
-├── build-app.sh                      # assembles + ad-hoc signs SpotifyMenuBar.app
+├── Package.swift                          # SwiftPM, macOS 13+, three targets
+├── Info.plist                             # bundle metadata (LSUIElement, usage strings)
+├── build-app.sh                           # assembles + ad-hoc signs SpotifyMenuBar.app
 ├── README.md
-├── AGENTS.md                         # instructions for AI coding agents
-├── CLAUDE.md                         # → points to AGENTS.md
-└── Sources/SpotifyMenuBar/main.swift # entire app
+├── AGENTS.md                              # instructions for AI coding agents
+├── CLAUDE.md                              # → points to AGENTS.md
+└── Sources/
+    ├── SpotifyMenuBar/main.swift          # AppKit app (executable)
+    ├── SpotifyMenuBarCore/                # pure logic library, no AppKit
+    │                                       # (Config, Settings, trunc, Rung, DisplayMode, BarLayout)
+    └── SpotifyMenuBarCoreTests/           # executable test runner (`swift run SpotifyMenuBarCoreTests`)
 ```
