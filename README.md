@@ -21,7 +21,11 @@ of bug can't happen.
   previous track; later in the track it restarts the current one (press again to go
   back) — standard player behavior.
 - Play/pause icon reflects the real player state.
-- **Right-click → Quit.**
+- **Adapts to the space available:** when the menu bar is tight, the item steps down
+  through track+artist → track only → controls only → play/pause alone, instead of
+  growing wide enough for macOS to hide it (and the icons next to it). Pin a specific
+  layout from **right-click → Display**.
+- **Right-click** for **Display** (pin a layout), **Launch at Login**, and **Quit**.
 - Single menu-bar item, right-anchored, so it survives the MacBook **notch** and the
   buttons don't shift when the track text changes length.
 
@@ -94,7 +98,7 @@ defaults write com.local.SpotifyMenuBar debugLayout -bool YES
 | `prevRestartSecs` | Double | `3.0` | Below this playback position, "back" goes to the previous track; above it, "back" restarts the current track |
 | `maxWidthFraction` | Double | `0.25` | Largest share of the menu bar's status-item region this item may claim. Clamped to 0.10–1.0. Lower it if the item crowds your bar. |
 | `displayMode` | String | `auto` | Pins the layout: `auto`, `full`, `compact`, `icons`, `playPause`. Also available on the right-click **Display** submenu. |
-| `debugLayout` | Bool | `false` | Opt-in diagnostic: logs the resolved budget, rung, region and window frame via `NSLog`. |
+| `debugLayout` | Bool | `false` | Opt-in diagnostic: logs `rung`, `text`, `requested`, `length`, `region`, `visible` and `windowFrame` via `NSLog` — for diagnosing space problems. |
 
 Remove an override with `defaults delete com.local.SpotifyMenuBar maxTrack`.
 
@@ -106,6 +110,10 @@ Remove an override with `defaults delete com.local.SpotifyMenuBar maxTrack`.
   `com.spotify.client.PlaybackStateChanged` distributed notification and re-queries
   the current track via AppleScript whenever playback changes. There is no polling
   and no timer, so idle CPU is effectively zero.
+- **Layout** never requests more width than `maxWidthFraction` of the status-item
+  region, computed from the current screen (accounting for the notch). It re-runs
+  whenever the screen configuration changes or you switch Spaces, so the item
+  re-fits itself rather than staying sized for wherever it last rendered.
 
 ## Known limitations
 
@@ -116,6 +124,10 @@ Remove an override with `defaults delete com.local.SpotifyMenuBar maxTrack`.
   for years but a future Spotify client could change them.
 - Built locally and **ad-hoc signed**, not notarized — fine for personal use, but
   not distributable to other Macs without proper signing/notarization.
+- The layout budget (`maxWidthFraction`) keeps this item from being greedy, but
+  there is no detection of how much room other apps' menu-bar items leave. On an
+  extremely crowded bar macOS can still hide this item; lower `maxWidthFraction`
+  or pin a smaller rung with the **Display** submenu if that happens.
 
 ## Project layout
 

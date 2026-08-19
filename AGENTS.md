@@ -79,9 +79,11 @@ will likely reintroduce the bug noted.
     status-item region. Before this, `length` came straight from `fittingSize`, and a
     long track title could claim ~45% of the region on a notched display — macOS
     responds by *hiding* items, so the item took its neighbours down with it.
-15. **The rung ladder has a floor.** `full → compact → icons → playPause`; the item
-    always renders something. At `playPause` the dropped prev/next controls appear in
-    the right-click menu, so no function becomes unreachable.
+15. **Never add a rung below `playPause`, and never let the ladder bottom out to
+    nothing.** `playPause` is the floor — the item must always render something. If a
+    narrower rung is ever needed, its dropped controls must relocate into the
+    right-click menu the same way `playPause` moves prev/next there, or that
+    function becomes unreachable.
 16. **Clip detection is NOT implemented, on purpose.** macOS exposes no API for
     remaining menu-bar space, and which observable field changes when it clips a status
     item is undocumented. The shipped behavior is the computed ceiling alone, which the
@@ -209,5 +211,8 @@ commit the spec, do it for real.
 
 - Proper Developer ID signing + notarization (currently ad-hoc, personal use only).
 - Apple Music support, album art, configurable hotkeys, a preferences UI.
+- The clip-detection / auto-demotion feedback loop described in decision #16 —
+  intentionally not implemented; it needs human-gathered probe data first. See
+  `docs/superpowers/specs/2026-08-18-menu-bar-space-adaptation-design.md`.
 
 If you add any of these, update `README.md` and this file.
