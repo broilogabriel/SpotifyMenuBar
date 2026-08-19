@@ -223,8 +223,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// away rather than waiting on the 0.3s coalescer below.
     @objc func screenChanged() {
         // A ceiling measured for a different region is meaningless. Gate on an actual
-        // change so Space switches — which share this selector but never move the
-        // region — cost no blink.
+        // change so Space switches — which share this selector but never move the region —
+        // don't drop a good ceiling. This only protects the *ceiling*; the remeasure below
+        // is still scheduled either way, so a Space switch inside the rate-limit window
+        // still blinks (deferred, not skipped, per barContentsMaybeChanged).
         let previous = lastRegion
         if currentRegion() != previous { barCeiling = nil }
         relayout(track: lastTrack.track, artist: lastTrack.artist)
@@ -246,7 +248,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Defer it to the end of the rate-limit window instead.
         var delay = 0.3
         if let last = lastCeilingMeasurement {
-            delay = max(delay, 3 - Date().timeIntervalSince(last))
+            delay = min(max(delay, 3 - Date().timeIntervalSince(last)), 3)
         }
         pendingMeasure?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.remeasureCeiling() }
@@ -488,11 +490,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // which is what keeps the shrink-and-regrow blink rare and removes any per-track
         // ratchet. Only `remeasureCeiling()` re-reads it.
         //
-        // nil after repeated failures means "cannot measure here" -> fraction-only, the
-        // documented degraded mode. Before that, nil means "not yet measured" -> stay
-        // minimal so we cannot evict anyone while we find out.
+        // nil while a cycle is in flight must still mean "minimum rung": that shrink is the
+        // measurement's precondition. Only degrade to fraction-only outside a cycle, after
+        // repeated failures. The give-up branch clears `measuringCeiling` before its own
+        // relayout, so the degraded widening still happens.
         let available: CGFloat? = barCeiling
-            ?? (ceilingGiveUps >= 2 ? nil : Rung.playPause.chromeWidth(metrics))
+            ?? ((ceilingGiveUps >= 2 && !measuringCeiling) ? nil : Rung.playPause.chromeWidth(metrics))
 
         guard !track.isEmpty else {
             // Route the placeholder through the same tested plan rather than a second,
@@ -528,9 +531,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // A pin makes `BarLayout.plan` return before it reads `available`, so the shrink
         // below would not shrink and the reading would be taken at full pinned width —
         // invalid by construction, and it would silently rot the cache for when Auto
-        // returns.
+        // returns. Also clear the give-up counter, or a pin round-trip could leave it
+        // armed and degrade the next Auto cycle to fraction-only before it ever retries.
         guard Settings.displayMode().pinnedRung == nil else {
             barCeiling = nil
+            ceilingGiveUps = 0
             return
         }
         measuringCeiling = true
