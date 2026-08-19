@@ -1,4 +1,5 @@
 import AppKit
+import OSLog
 import ServiceManagement
 import SpotifyMenuBarCore
 
@@ -303,13 +304,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     ///   defaults write com.local.SpotifyMenuBar debugLayout -bool YES
     /// Which of these fields actually moves when macOS clips a status item is not
     /// documented; this is how we find out.
+    ///
+    /// `os.Logger` with an explicit `privacy: .public`, NOT `NSLog`. Current macOS
+    /// redacts NSLog's formatted string to `<private>` in the unified log, so the
+    /// fields were unreadable by `log show`/`log stream` — which defeats the entire
+    /// purpose of a diagnostic you are meant to read back.
+    private static let layoutLog = Logger(subsystem: "com.local.SpotifyMenuBar", category: "layout")
+
     func logLayout(_ r: BarLayout.Resolution, requested: CGFloat) {
         guard UserDefaults.standard.bool(forKey: "debugLayout") else { return }
         let w = statusItem.button?.window
-        NSLog("[layout] rung=%@ text=%@ requested=%.1f length=%.1f region=%@ visible=%@ windowFrame=%@",
-              String(describing: r.rung), r.labelText ?? "-", requested, statusItem.length,
-              NSStringFromRect(currentRegion()), statusItem.isVisible ? "Y" : "N",
-              w.map { NSStringFromRect($0.frame) } ?? "nil")
+        let msg = "[layout]"
+            + " rung=\(r.rung)"
+            + " text=\(r.labelText ?? "-")"
+            + String(format: " requested=%.1f length=%.1f", requested, statusItem.length)
+            + " region=\(NSStringFromRect(currentRegion()))"
+            + " visible=\(statusItem.isVisible ? "Y" : "N")"
+            + " windowFrame=\(w.map { NSStringFromRect($0.frame) } ?? "nil")"
+        Self.layoutLog.notice("\(msg, privacy: .public)")
     }
 
     /// Recompute the rung for the current track and apply it.
