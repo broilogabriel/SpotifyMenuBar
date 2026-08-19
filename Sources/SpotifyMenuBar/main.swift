@@ -250,7 +250,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return lastRegion
     }
 
-    /// The status-item windows currently on screen, plus our own rect.
+    /// The status-item windows currently on screen, plus our own rect and region.
     ///
     /// `CGWindowListCopyWindowInfo` needs **no** Screen Recording permission for bounds —
     /// only window titles (`kCGWindowName`) are gated.
@@ -258,13 +258,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Our own rect comes from `NSWindow`, NOT from the list. macOS hosts NSStatusItem
     /// windows inside the **Control Center** process, so every entry reports Control
     /// Center's pid and window number; there is nothing in the list that identifies ours.
-    /// Only `X` and `width` are comparable anyway — `CGWindowBounds` is top-left origin
-    /// while `NSWindow.frame` is bottom-left.
+    /// The list does contain a Control-Center-owned entry at our own X/width — numerically
+    /// close to `own` but not identical (observed 1pt apart) — which is harmless because
+    /// `availableWidth` only reads `own.width` and the minimum `minX`, both re-queried fresh
+    /// each call, so nothing accumulates.
+    ///
+    /// `CGWindowBounds` is global with the origin at the TOP-left of the primary display;
+    /// `NSWindow.frame`/`NSScreen` coordinates put it at the BOTTOM-left. Each candidate is
+    /// converted before filtering, so a window on another display whose X range happens to
+    /// overlap this one's is still excluded by Y — X alone cannot tell two stacked displays
+    /// apart.
     ///
     /// Returns nil while our item is not yet placed. An unplaced status window sits
     /// outside the bar region entirely (observed: `{{0, -33}, {84, 33}}`), which is the
     /// "cannot measure yet" signal Task 4 consumes.
-    func statusItemFrames() -> (own: CGRect, all: [CGRect])? {
+    ///
+    /// Also returns the region so callers don't call `currentRegion()` again — it caches
+    /// into `lastRegion`, so a second call would be a redundant side-effecting one.
+    func statusItemFrames() -> (own: CGRect, all: [CGRect], region: CGRect)? {
         guard let window = statusItem.button?.window else { return nil }
         let region = currentRegion()
         let ownFrame = window.frame
@@ -275,24 +286,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let statusLayer = Int(CGWindowLevelForKey(.statusWindow))
         let own = CGRect(x: ownFrame.minX, y: region.minY,
                          width: ownFrame.width, height: region.height)
+        // CGWindowBounds is global with the origin at the TOP-left of the primary display;
+        // NSScreen coordinates put it at the BOTTOM-left. Convert before comparing, or a
+        // window on another display whose X range overlaps this one's gets counted.
+        let primaryMaxY = NSScreen.screens.first?.frame.maxY ?? region.maxY
         var all: [CGRect] = []
         for entry in raw {
             guard (entry[kCGWindowLayer as String] as? Int) == statusLayer,
                   let b = entry[kCGWindowBounds as String] as? [String: CGFloat],
-                  let x = b["X"], let w = b["Width"] else { continue }
-            let rect = CGRect(x: x, y: region.minY, width: w, height: region.height)
-            // Keep only items in this screen's status area (multi-display).
-            guard rect.maxX > region.minX, rect.minX < region.maxX else { continue }
+                  let x = b["X"], let w = b["Width"],
+                  let cgY = b["Y"], let h = b["Height"] else { continue }
+            let rect = CGRect(x: x, y: primaryMaxY - (cgY + h), width: w, height: h)
+            // Both axes must intersect: X alone cannot tell two stacked displays apart.
+            guard rect.maxX > region.minX, rect.minX < region.maxX,
+                  rect.maxY > region.minY, rect.minY < region.maxY else { continue }
             all.append(rect)
         }
         guard !all.isEmpty else { return nil }
-        return (own, all)
+        return (own, all, region)
     }
 
     /// Measured free space, or nil when the item is not yet placed.
     func measuredAvailable() -> CGFloat? {
-        guard let frames = statusItemFrames() else { return nil }
-        return BarLayout.availableWidth(own: frames.own, all: frames.all, region: currentRegion())
+        guard let f = statusItemFrames() else { return nil }
+        return BarLayout.availableWidth(own: f.own, all: f.all, region: f.region)
     }
 
     // Measured with a real NSTextField, not a bare NSString: the field's cell adds ~4pt
