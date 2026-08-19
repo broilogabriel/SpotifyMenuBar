@@ -240,4 +240,16 @@ expect(BarLayout.plan(track: "Advertisement", artist: "", regionWidth: 772,
                       measure: measure).labelText, "Advertisement",
        "a pinned rung still collapses an empty artist")
 
+// A1's ceiling: a pinned rung is bounded by the region, so an absurd maxTrack cannot make
+// the item run away. Deleting the clamp must fail a check, not pass silently.
+let hugeSettings = Settings(maxTrack: 300, maxArtist: 300, prevRestartSecs: 3)
+let clamped = BarLayout.pin(.full, track: String(repeating: "A", count: 300),
+                            artist: String(repeating: "B", count: 300),
+                            regionWidth: 200, settings: hugeSettings, metrics: m,
+                            measure: measure)
+expect(clamped.totalWidth <= max(200, Rung.full.chromeWidth(m)), true,
+       "a pinned rung is bounded by the region")
+expect((clamped.labelText ?? "").hasSuffix("…"), true,
+       "a pinned rung too wide for the region degrades its text, not the whole item")
+
 summarize()

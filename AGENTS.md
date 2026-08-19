@@ -81,9 +81,15 @@ will likely reintroduce the bug noted.
     label/model width disagreement and nothing more. Before this, `length` came
     straight from `fittingSize`, and a long track title could claim ~45% of the region
     on a notched display — macOS responds by *hiding* items, so the item took its
-    neighbours down with it. A pin (decision below, `BarLayout.pin`) is a deliberate
-    exception to the budget: it fits the text to the region instead, so a pinned rung
-    overrides the automatic choice without letting the item disappear.
+    neighbours down with it. `BarLayout.pin` (used by the right-click **Display**
+    submenu) is a deliberate exception: it overrides the *budget*, on purpose — the
+    user is trading the safety margin for their stated preference, and clamping a pin
+    to the same 0.25 budget would make it meaningless, since `resolve` would already
+    have picked that rung if it fit. Its only ceiling is the region itself (100% of
+    it), which exists to stop an absurd `maxTrack`/`maxArtist` override from running
+    away, **not** to guarantee the item stays visible. A pinned larger rung on a
+    crowded bar *can* still get hidden by macOS; the remedy is the user's — pick a
+    smaller rung, or Auto.
 15. **Never add a rung below `playPause`, and never let the ladder bottom out to
     nothing.** `playPause` is the floor — the item must always render something. If a
     narrower rung is ever needed, its dropped controls must relocate into the

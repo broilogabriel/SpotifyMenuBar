@@ -67,7 +67,9 @@ the toggle also appears under **System Settings → General → Login Items**.
 The same right-click menu has a **Display** submenu to pin how much the item shows:
 **Auto** (the default — fits as much as the menu bar has room for), **Track and
 Artist**, **Track Only**, **Controls Only**, or **Play/Pause Only**. The chosen mode
-is checked in the submenu and persists across relaunches.
+is checked in the submenu and persists across relaunches. Pinning a larger layout
+overrides the space budget on purpose, so on a crowded menu bar macOS may still hide
+the item — pick a smaller layout, or **Auto**, if that happens.
 
 Notes:
 - The `.app` is a menu-bar agent (`LSUIElement`) — no Dock icon, no app menu.

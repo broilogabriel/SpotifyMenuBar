@@ -127,12 +127,15 @@ public enum BarLayout {
                           totalWidth: Rung.playPause.chromeWidth(metrics))
     }
 
-    /// Re-render at a rung the user pinned explicitly, skipping the budget.
+    /// Re-render at a rung the user pinned explicitly, skipping the budget on purpose —
+    /// the user is trading the safety margin for their stated preference, and clamping
+    /// a pin to the same budget `resolve` uses would make it meaningless (`resolve`
+    /// would already have picked that rung if it fit).
     ///
-    /// A pin overrides the *rung* choice, not physics: the text is still fitted to
-    /// `regionWidth` so a pinned `.full` cannot claim so much of the bar that macOS
-    /// hides the item — which would leave the pin achieving the opposite of what the
-    /// user asked for.
+    /// `regionWidth` is the only ceiling, and it is 100% of the region: it exists so an
+    /// absurd `maxTrack`/`maxArtist` override can't run away, not to guarantee the item
+    /// stays visible. A pinned larger rung on a crowded bar can still get hidden by
+    /// macOS; the remedy is the user's — pick a smaller rung, or Auto.
     public static func pin(_ rung: Rung, track: String, artist: String,
                            regionWidth: CGFloat, settings: Settings,
                            metrics: Rung.Metrics,
