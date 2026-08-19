@@ -502,7 +502,7 @@ rung, cache the result, and re-establish it when the bar changes."
 
 ---
 
-### Task 6: Documentation
+### Task 5: Documentation
 
 **Files:**
 - Modify: `AGENTS.md` (new decision 19; amend decision 14)
@@ -513,23 +513,25 @@ rung, cache the result, and re-establish it when the bar changes."
 Append to the "Hard-won design decisions — do not regress these" list:
 
 ```markdown
-19. **The automatic path must never exceed measured free space.** `BarLayout.availableWidth`
-    reads every status item's geometry via `CGWindowListCopyWindowInfo` and
-    `BarLayout.plan` caps the budget at it. Before this, a fixed 0.25 fraction asked for
-    205pt when only 196pt was free and macOS hid a neighbouring app's icon (NordVPN's,
-    measured 2026-08-19). Two properties keep it safe and must survive any refactor:
-    `own` is included in `all`, which makes `available` **invariant to our own width** and
-    is the only reason the grow-in terminates without hysteresis; and free space is derived
-    from the occupied block's **left edge**, not a sum of widths, because items can overhang
-    the region (one ended 2pt past `region.maxX`). Identify our own window by
-    taking our own rect from `NSWindow.frame` and using `CGWindowList` only for other
-    items' `minX` — **our own item is unfindable in that list**, because macOS hosts
-    NSStatusItem windows in the Control Center process, so every entry carries Control
-    Center's pid and window number. Only `X` and `width` are comparable anyway
-    (`CGWindowBounds` is top-left origin, `NSWindow.frame` bottom-left). `CGWindowList`
-    bounds need no
-    Screen Recording permission; only window *titles* do. A **pinned** rung is the
-    deliberate exception and stays exempt.
+19. **The automatic path must never exceed the cached ceiling, and that ceiling may only be
+    measured at minimum width.** A fixed 0.25 fraction once asked for 205pt when only 196pt
+    was free and macOS hid a neighbouring app's icon (NordVPN's, 2026-08-19).
+    **`available` is NOT invariant to our own width — that claim was measured and refuted.**
+    Changing only our width moved it from 91pt (at 40pt wide) to 437pt (at 282pt wide),
+    because widening evicts leftward neighbours and their vacated space reads back as a
+    bigger gap. A measure-then-grow loop therefore ratchets, and re-measuring while
+    oversized measures the damage already done. **Only a reading taken at the minimum rung
+    is honest** — that is why `remeasureCeiling()` shrinks first, and why ordinary
+    track-change relayouts must keep reusing the cache instead of re-reading.
+    Other facts that cost time here: free space comes from the occupied block's **left
+    edge**, not a sum of widths, because items can overhang the region (one ended 2pt past
+    `region.maxX`); **our own item is unfindable in `CGWindowList`**, because macOS hosts
+    NSStatusItem windows in the Control Center process, so every entry carries that
+    process's pid and window number — take our own rect from `NSWindow.frame`, and note
+    only `X` and `width` are comparable (`CGWindowBounds` is top-left origin,
+    `NSWindow.frame` bottom-left); `CGWindowList` bounds need no Screen Recording
+    permission, only window *titles* do. A **pinned** rung is the deliberate exception and
+    stays exempt — the one remaining path that can displace a neighbour.
 ```
 
 - [ ] **Step 2: Amend decision 14**
@@ -538,7 +540,7 @@ Decision 14 currently describes `maxWidthFraction` as the ceiling. Add one sente
 
 - [ ] **Step 3: Update `README.md`**
 
-In the adaptive-layout Features bullet, say the item measures how much menu-bar space is actually free rather than assuming a fixed share, so it will not push other icons out.
+In the adaptive-layout Features bullet, say the item measures how much menu-bar space is actually free rather than assuming a fixed share, so it will not push other icons out — and set the expectation honestly: on a busy menu bar it will therefore sit at controls-only or play/pause-only rather than displacing something, and **Display** is there if you would rather override that.
 
 Then narrow the known limitation. It currently says macOS may still hide the item on a crowded bar; that now applies only to a **pinned** layout. Replace it with: the automatic layout measures free space and will not displace other icons, but a layout pinned via **Display** deliberately overrides that, so a pinned larger layout can still be hidden — pick a smaller one or **Auto**.
 
@@ -573,14 +575,14 @@ git commit -m "docs: document measured free space as the harder ceiling"
 | 2. Arithmetic (pure, Core) | Task 1 |
 | 3. Why it cannot oscillate | Task 1's stability sweep; `scheduleMeasureRetry` comment in Task 4 |
 | 4. Budget composition | Task 3 |
-| 5. Startup: start minimal, then grow | Task 4 |
-| 6. Re-measure triggers + own coalescing | Task 5 |
+| 5. Startup: the ceiling cycle | Task 4 Steps 3-4 |
+| 6. When the ceiling is re-established | Task 4 Step 4 |
 | 7. Pin is exempt | Task 3 Step 3, checked in Task 3 Step 1 |
 | Structure / boundaries | Tasks 1–2 (Core vs AppKit split) |
 | Failure-mode table | Task 2 (nil paths), Task 3 (`available` nil, floor), Task 1 (clamp at 0, empty list) |
 | Settings: `debugLayout` gains `available=` | Task 2 Step 2 |
 | Verification table | each task's verify step; Task 4 Step 4 is the one that matters |
-| Docs to update | Task 6 |
+| Docs to update | Task 5 |
 
 No gaps.
 
@@ -588,6 +590,6 @@ No gaps.
 
 **Type consistency:** `availableWidth(own:all:region:)` keeps one signature across Tasks 1, 2 and `AGENTS.md`. `plan(...)` gains `available: CGFloat?` in Task 3 and every later reference uses it. `measuredAvailable() -> CGFloat?` is introduced in Task 2 and used in Tasks 3 and 4. `pendingMeasure` is deliberately distinct from the existing `pendingRefresh`.
 
-**Known sequencing wrinkle:** Task 3 Step 4 wires `available: measuredAvailable()` at both call sites, and Task 4 Step 2 replaces both with a single hoisted `available`. That is intentional — Task 3 must leave the build green on its own — but the Task 4 implementer should expect to edit lines Task 3 just wrote.
+**Known sequencing wrinkle:** Task 3 Step 4 wires `available: measuredAvailable()` at both call sites, and Task 4 Step 2 replaces both with the cached `barCeiling`. Task 4 also supersedes the original Task 5, so this plan has 5 tasks, not 6. That is intentional — Task 3 must leave the build green on its own — but the Task 4 implementer should expect to edit lines Task 3 just wrote.
 
 **Verified numbers:** every expected value in Tasks 1 and 3 was produced by running a prototype of `availableWidth` and of the amended `plan` against the 7pt-per-character stub, not derived by hand. The stability sweep was confirmed to yield exactly one distinct value (196) across widths 24–400.
