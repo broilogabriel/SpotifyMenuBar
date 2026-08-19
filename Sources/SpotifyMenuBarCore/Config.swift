@@ -8,6 +8,9 @@ public enum Config {
     public static let prevRestartSecs = 3.0   // within this many secs, "back" goes to the previous track; later it restarts
     public static let buttonWidth: CGFloat = 16
     public static let stackSpacing: CGFloat = 6
+    /// Height of the menu-bar strip status items live in. `debugLayout` prints the
+    /// full region rect, so this and `BarLayout.region`'s use of it must not drift.
+    public static let menuBarHeight: CGFloat = 24
     /// Slack added to the stack's fitting size when setting `statusItem.length`.
     public static let padding: CGFloat = 8
     /// Below this a label is illegible, so the resolver drops the label entirely

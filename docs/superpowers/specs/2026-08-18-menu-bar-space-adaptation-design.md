@@ -119,6 +119,9 @@ which matches the stated priority (controls survive, text degrades).
 
 ### 5. Clip feedback
 
+**Not implemented — see AGENTS.md decision 16. Only the `debugLayout` diagnostic below
+shipped.**
+
 After applying a resolution and setting `statusItem.length`, on the next runloop turn:
 
 ```

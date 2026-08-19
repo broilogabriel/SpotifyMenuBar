@@ -10,6 +10,10 @@ public enum Rung: Int, CaseIterable, Sendable {
     case playPause    // play/pause only; prev/next move into the right-click menu
 
     /// The next rung down, or nil at the floor.
+    ///
+    /// Currently unused in production: `resolve` walks `allCases` top-down rather than
+    /// stepping via `next`. This is the seam for the clip-detection demotion loop
+    /// described in AGENTS.md decision #16, which is deliberately unbuilt.
     public var next: Rung? { Rung(rawValue: rawValue + 1) }
 
     public var showsLabel: Bool { self == .full || self == .compact }

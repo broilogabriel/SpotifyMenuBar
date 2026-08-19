@@ -53,9 +53,9 @@ will likely reintroduce the bug noted.
    `.menu` on the status button and each subview is what reliably shows the Quit
    menu. `NSClickGestureRecognizer` with a secondary-button mask did **not** fire on
    the status-bar button — don't reintroduce it.
-6. **`statusItem.length` is recomputed in `update()`** from the stack's
-   `fittingSize` because the item uses a custom view (variable-length sizing won't
-   track custom subviews automatically).
+6. **`statusItem.length` is recomputed in `resize(to:)`** (called from `apply()`) from
+   the stack's `fittingSize` because the item uses a custom view (variable-length
+   sizing won't track custom subviews automatically).
 7. **`setActivationPolicy(.accessory)`** keeps it out of the Dock when run via
    `swift run`. The `.app` bundle also sets `LSUIElement` in `Info.plist`. Keep both.
 8. **Launch at login uses `SMAppService.mainApp`** (macOS 13+), toggled from the
@@ -74,11 +74,16 @@ will likely reintroduce the bug noted.
     "Play or pause", "Next". The label field is already readable.
 13. **`Settings.current()` clamps UserDefaults values** (`maxTrack`/`maxArtist` ≥ 1,
     `prevRestartSecs` ≥ 0) so a bad `defaults write` can't break layout.
-14. **Never request more width than the budget allows.** `resize(to:)` clamps
-    `statusItem.length` to a fraction (`maxWidthFraction`, default 0.25) of the
-    status-item region. Before this, `length` came straight from `fittingSize`, and a
-    long track title could claim ~45% of the region on a notched display — macOS
-    responds by *hiding* items, so the item took its neighbours down with it.
+14. **Never request more width than the budget allows.** The ceiling is computed in
+    `BarLayout.budget` (a fraction, `maxWidthFraction` default 0.25, of the status-item
+    region) and enforced by `resolve`'s guards; `resize(to:)` only clamps
+    `statusItem.length` to the chosen resolution's own `totalWidth`, which catches a
+    label/model width disagreement and nothing more. Before this, `length` came
+    straight from `fittingSize`, and a long track title could claim ~45% of the region
+    on a notched display — macOS responds by *hiding* items, so the item took its
+    neighbours down with it. A pin (decision below, `BarLayout.pin`) is a deliberate
+    exception to the budget: it fits the text to the region instead, so a pinned rung
+    overrides the automatic choice without letting the item disappear.
 15. **Never add a rung below `playPause`, and never let the ladder bottom out to
     nothing.** `playPause` is the floor — the item must always render something. If a
     narrower rung is ever needed, its dropped controls must relocate into the

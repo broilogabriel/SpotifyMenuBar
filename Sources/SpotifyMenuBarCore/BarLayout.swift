@@ -6,7 +6,7 @@ import Foundation
 /// Deliberately pure: no AppKit, no NSScreen, no clock, no views. Text measurement
 /// arrives as a closure because NSAttributedString sizing is AppKit-only, and the
 /// caller owns the font. That is what makes every rule here checkable.
-public struct BarLayout {
+public enum BarLayout {
 
     public struct Resolution: Equatable {
         public let rung: Rung
@@ -32,9 +32,9 @@ public struct BarLayout {
         // on the left. Half is a deliberate under-estimate — being wrong here costs a
         // rung, while over-estimating costs the whole item.
         return CGRect(x: screenFrame.midX,
-                      y: screenFrame.maxY - 24,
+                      y: screenFrame.maxY - Config.menuBarHeight,
                       width: screenFrame.width / 2,
-                      height: 24)
+                      height: Config.menuBarHeight)
     }
 
     /// Never ask for more than `fraction` of the region — that greed is what makes
@@ -127,16 +127,38 @@ public struct BarLayout {
                           totalWidth: Rung.playPause.chromeWidth(metrics))
     }
 
-    /// Re-render at a rung the user pinned explicitly, skipping the budget entirely.
-    /// The result may exceed the budget: that is the point of an override, and
-    /// `resize(to:)` still clamps the request to `totalWidth`.
+    /// Re-render at a rung the user pinned explicitly, skipping the budget.
+    ///
+    /// A pin overrides the *rung* choice, not physics: the text is still fitted to
+    /// `regionWidth` so a pinned `.full` cannot claim so much of the bar that macOS
+    /// hides the item — which would leave the pin achieving the opposite of what the
+    /// user asked for.
     public static func pin(_ rung: Rung, track: String, artist: String,
-                           settings: Settings, metrics: Rung.Metrics,
+                           regionWidth: CGFloat, settings: Settings,
+                           metrics: Rung.Metrics,
                            measure: (String) -> CGFloat) -> Resolution {
-        let text = rung.showsLabel
-            ? labelText(for: rung, track: track, artist: artist, settings: settings)
-            : nil
-        return Resolution(rung: rung, labelText: text,
-                          totalWidth: rung.chromeWidth(metrics) + (text.map(measure) ?? 0))
+        let chrome = rung.chromeWidth(metrics)
+        guard rung.showsLabel else { return Resolution(rung: rung, labelText: nil, totalWidth: chrome) }
+        let preferred = labelText(for: rung, track: track, artist: artist, settings: settings)
+        let room = max(regionWidth - chrome, 0)
+        let text = measure(preferred) <= room
+            ? preferred
+            : (ellipsisFit(preferred, room, measure) ?? preferred)
+        return Resolution(rung: rung, labelText: text, totalWidth: chrome + measure(text))
+    }
+
+    /// The whole layout decision: resolve against the budget, then let a user pin
+    /// override the rung. One place, so the two callers cannot drift.
+    public static func plan(track: String, artist: String, regionWidth: CGFloat,
+                            fraction: Double, pin pinned: Rung?, settings: Settings,
+                            metrics: Rung.Metrics,
+                            measure: (String) -> CGFloat) -> Resolution {
+        if let pinned {
+            return pin(pinned, track: track, artist: artist, regionWidth: regionWidth,
+                       settings: settings, metrics: metrics, measure: measure)
+        }
+        return resolve(track: track, artist: artist,
+                       budget: budget(regionWidth: regionWidth, fraction: fraction, metrics: metrics),
+                       settings: settings, metrics: metrics, measure: measure)
     }
 }

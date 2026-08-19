@@ -260,6 +260,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Text measurement is AppKit-only, so `BarLayout` takes it as a closure.
     func measureLabel(_ s: String) -> CGFloat {
+        // The label's font can change after `sizer` is created (e.g. a screen change
+        // re-resolving `menuBarFont`); a stale model font is the one path that lets
+        // `resize`'s clamp bind and crop the label's first character.
+        sizer.font = label.font
         sizer.stringValue = s
         return ceil(sizer.fittingSize.width)
     }
@@ -314,38 +318,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // A pinned rung skips the budget entirely — that is the point of the override —
         // and it has to win on the placeholder path too, which returns early below.
         let pinned = Settings.displayMode().pinnedRung
+        let settings = Settings.current()
+        let metrics = Rung.Metrics.default
+        let regionWidth = currentRegion().width
+        let fraction = Settings.maxWidthFraction()
+
         guard !track.isEmpty else {
-            let metrics = Rung.Metrics.default
-            let budget = BarLayout.budget(regionWidth: currentRegion().width,
-                                          fraction: Settings.maxWidthFraction(),
-                                          metrics: metrics)
-            // Route the placeholder through the same tested resolver rather than a
-            // second, hand-derived ladder that could drift from it.
-            var placeholder = BarLayout.resolve(track: "♪", artist: "", budget: budget,
-                                                settings: Settings.current(), metrics: metrics,
-                                                measure: measureLabel)
-            if let pinned, pinned != placeholder.rung {
-                placeholder = BarLayout.pin(pinned, track: "♪", artist: "",
-                                            settings: Settings.current(), metrics: metrics,
-                                            measure: measureLabel)
-            }
+            // Route the placeholder through the same tested plan rather than a second,
+            // hand-derived ladder that could drift from it.
+            let placeholder = BarLayout.plan(track: "♪", artist: "", regionWidth: regionWidth,
+                                             fraction: fraction, pin: pinned, settings: settings,
+                                             metrics: metrics, measure: measureLabel)
             apply(placeholder, fullTitle: nil)
             return
         }
 
-        let settings = Settings.current()
-        let metrics = Rung.Metrics.default
-        let fraction = Settings.maxWidthFraction()
-        let budget = BarLayout.budget(regionWidth: currentRegion().width,
-                                      fraction: fraction, metrics: metrics)
-        var resolved = BarLayout.resolve(track: track, artist: artist, budget: budget,
-                                        settings: settings, metrics: metrics,
-                                        measure: measureLabel)
-        if let pinned, pinned != resolved.rung {
-            resolved = BarLayout.pin(pinned, track: track, artist: artist,
-                                     settings: settings, metrics: metrics,
-                                     measure: measureLabel)
-        }
+        let resolved = BarLayout.plan(track: track, artist: artist, regionWidth: regionWidth,
+                                      fraction: fraction, pin: pinned, settings: settings,
+                                      metrics: metrics, measure: measureLabel)
         // Ads and untagged local files report an empty artist; an unconditional
         // separator would render a stranded "Track – ".
         let fullTitle = artist.isEmpty ? track : "\(track) – \(artist)"

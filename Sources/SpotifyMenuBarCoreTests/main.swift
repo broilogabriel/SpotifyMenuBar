@@ -190,25 +190,54 @@ expect(Settings.displayMode(d), .auto, "unset displayMode is auto")
 
 // MARK: BarLayout.pin
 
+// A generous region so these checks exercise the label composition, not the new A1
+// ceiling — that ceiling gets its own checks below.
+let roomyRegion: CGFloat = 1000
+
 // A user pin must honour the empty-artist collapse exactly as the automatic path does —
 // a second label composer is how "Advertisement – " shipped once already.
-expect(BarLayout.pin(.full, track: "Advertisement", artist: "", settings: st,
-                     metrics: m, measure: measure).labelText,
+expect(BarLayout.pin(.full, track: "Advertisement", artist: "", regionWidth: roomyRegion,
+                     settings: st, metrics: m, measure: measure).labelText,
        "Advertisement", "a pinned full rung collapses an empty artist")
-expect(BarLayout.pin(.full, track: "Bohemian Rhapsody", artist: "Queen", settings: st,
-                     metrics: m, measure: measure).labelText,
+expect(BarLayout.pin(.full, track: "Bohemian Rhapsody", artist: "Queen", regionWidth: roomyRegion,
+                     settings: st, metrics: m, measure: measure).labelText,
        "Bohemian Rhapsody – Queen", "a pinned full rung keeps a present artist")
-expect(BarLayout.pin(.compact, track: "Bohemian Rhapsody", artist: "Queen", settings: st,
-                     metrics: m, measure: measure).labelText,
+expect(BarLayout.pin(.compact, track: "Bohemian Rhapsody", artist: "Queen", regionWidth: roomyRegion,
+                     settings: st, metrics: m, measure: measure).labelText,
        "Bohemian Rhapsody", "a pinned compact rung drops the artist")
-expect(BarLayout.pin(.icons, track: "Bohemian Rhapsody", artist: "Queen", settings: st,
-                     metrics: m, measure: measure).labelText,
+expect(BarLayout.pin(.icons, track: "Bohemian Rhapsody", artist: "Queen", regionWidth: roomyRegion,
+                     settings: st, metrics: m, measure: measure).labelText,
        nil, "a pinned iconic rung carries no label")
 expectClose(Double(BarLayout.pin(.playPause, track: "Bohemian Rhapsody", artist: "Queen",
-                                 settings: st, metrics: m, measure: measure).totalWidth),
+                                 regionWidth: roomyRegion, settings: st, metrics: m,
+                                 measure: measure).totalWidth),
             24, "a pinned playPause rung is just its chrome")
-expect(BarLayout.pin(.full, track: "Bohemian Rhapsody", artist: "Queen", settings: st,
-                     metrics: m, measure: measure).rung,
+expect(BarLayout.pin(.full, track: "Bohemian Rhapsody", artist: "Queen", regionWidth: roomyRegion,
+                     settings: st, metrics: m, measure: measure).rung,
        .full, "pin returns the rung it was asked for")
+
+// MARK: BarLayout.plan (A3/A4) — the resolve-then-pin composition, tested where it lives
+
+var widthHolds = true, labelHolds = true
+for step in 0...400 {
+    let b = CGFloat(step)
+    let r = BarLayout.resolve(track: "Bohemian Rhapsody", artist: "Queen", budget: b,
+                              settings: st, metrics: m, measure: measure)
+    if r.totalWidth > max(b, Rung.playPause.chromeWidth(m)) + 0.001 { widthHolds = false }
+    if r.rung.showsLabel && (r.labelText ?? "").isEmpty { labelHolds = false }
+}
+expect(widthHolds, true, "resolve never exceeds the budget except at the floor")
+expect(labelHolds, true, "a labelled rung always carries non-empty text")
+
+expect(BarLayout.plan(track: "Bohemian Rhapsody", artist: "Queen", regionWidth: 772,
+                      fraction: 0.25, pin: nil, settings: st, metrics: m,
+                      measure: measure).rung, .compact, "plan with no pin matches the budget")
+expect(BarLayout.plan(track: "Bohemian Rhapsody", artist: "Queen", regionWidth: 772,
+                      fraction: 0.25, pin: .full, settings: st, metrics: m,
+                      measure: measure).rung, .full, "a pin overrides the budget's rung")
+expect(BarLayout.plan(track: "Advertisement", artist: "", regionWidth: 772,
+                      fraction: 0.25, pin: .full, settings: st, metrics: m,
+                      measure: measure).labelText, "Advertisement",
+       "a pinned rung still collapses an empty artist")
 
 summarize()

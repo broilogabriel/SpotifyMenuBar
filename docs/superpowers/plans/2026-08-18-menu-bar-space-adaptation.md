@@ -10,6 +10,19 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-18-menu-bar-space-adaptation-design.md`
 
+## Status (2026-08-18, post-review)
+
+Tasks 1–6 and 8 are complete and shipped. Task 7 shipped only its diagnostic (Steps
+1–2, the `debugLayout` log); its Steps 3–7 (`clipVerdict`, `applyWithFeedback`, the
+demotion loop) are intentionally unbuilt, pending human-gathered probe data per
+AGENTS.md decision 16 — see spec section 5. The unchecked boxes below reflect that:
+do not check them off, and do not treat them as missed work.
+
+Also note: `BarLayout.pin` gained a `regionWidth:` parameter after this plan was
+written (a fix-wave item, so a pin fits its text to the region rather than bypassing
+the budget entirely). Task 7's code sketch, which references the pre-fix
+`BarLayout.pin(_:track:artist:settings:metrics:measure:)` signature, is out of date.
+
 ## Global Constraints
 
 - **No third-party dependencies. No SwiftUI.** Plain Swift + AppKit only.
