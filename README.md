@@ -21,10 +21,13 @@ of bug can't happen.
   previous track; later in the track it restarts the current one (press again to go
   back) — standard player behavior.
 - Play/pause icon reflects the real player state.
-- **Adapts to the space available:** when the menu bar is tight, the item steps down
-  through track+artist → track only → controls only → play/pause alone, instead of
-  growing wide enough for macOS to hide it (and the icons next to it). Pin a specific
-  layout from **right-click → Display**.
+- **Adapts to the space available:** the item measures how much menu-bar space is
+  actually free rather than assuming a fixed share, so it will not push other icons
+  out. When the menu bar is tight, it steps down through track+artist → track only →
+  controls only → play/pause alone instead of growing wide enough for macOS to hide
+  it (or a neighbour). On a busy bar this means it will settle for controls-only or
+  play/pause-only rather than displacing something — that's intended. Pin a specific
+  layout from **right-click → Display** if you'd rather override that.
 - **Right-click** for **Display** (pin a layout), **Launch at Login**, and **Quit**.
 - Single menu-bar item, right-anchored, so it survives the MacBook **notch** and the
   buttons don't shift when the track text changes length.
@@ -126,10 +129,9 @@ Remove an override with `defaults delete com.local.SpotifyMenuBar maxTrack`.
   for years but a future Spotify client could change them.
 - Built locally and **ad-hoc signed**, not notarized — fine for personal use, but
   not distributable to other Macs without proper signing/notarization.
-- The layout budget (`maxWidthFraction`) keeps this item from being greedy, but
-  there is no detection of how much room other apps' menu-bar items leave. On an
-  extremely crowded bar macOS can still hide this item; lower `maxWidthFraction`
-  or pin a smaller rung with the **Display** submenu if that happens.
+- The automatic layout measures free space and will not displace other icons, but a
+  layout pinned via **Display** deliberately overrides that, so a pinned larger
+  layout can still be hidden on a crowded bar — pick a smaller one, or **Auto**.
 
 ## Project layout
 

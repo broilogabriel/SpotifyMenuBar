@@ -89,7 +89,9 @@ will likely reintroduce the bug noted.
     it), which exists to stop an absurd `maxTrack`/`maxArtist` override from running
     away, **not** to guarantee the item stays visible. A pinned larger rung on a
     crowded bar *can* still get hidden by macOS; the remedy is the user's — pick a
-    smaller rung, or Auto.
+    smaller rung, or Auto. The fraction is now the *softer* of two ceilings: measured
+    free space (decision #19) is the harder one, and the automatic path takes whichever
+    is smaller.
 15. **Never add a rung below `playPause`, and never let the ladder bottom out to
     nothing.** `playPause` is the floor — the item must always render something. If a
     narrower rung is ever needed, its dropped controls must relocate into the
@@ -119,6 +121,25 @@ will likely reintroduce the bug noted.
     only on the label, because at `icons` and `playPause` the label is hidden and they
     become the only way to know what is playing. Setting them on the label alone
     silently breaks decision #12 at reduced rungs.
+19. **The automatic path must never exceed the cached ceiling, and that ceiling may only be
+    measured at minimum width.** A fixed 0.25 fraction once asked for 205pt when only 196pt
+    was free and macOS hid a neighbouring app's icon (NordVPN's, 2026-08-19).
+    **`available` is NOT invariant to our own width — that claim was measured and refuted.**
+    Changing only our width moved it from 91pt (at 40pt wide) to 437pt (at 282pt wide),
+    because widening evicts leftward neighbours and their vacated space reads back as a
+    bigger gap. A measure-then-grow loop therefore ratchets, and re-measuring while
+    oversized measures the damage already done. **Only a reading taken at the minimum rung
+    is honest** — that is why `remeasureCeiling()` shrinks first, and why ordinary
+    track-change relayouts must keep reusing the cache instead of re-reading.
+    Other facts that cost time here: free space comes from the occupied block's **left
+    edge**, not a sum of widths, because items can overhang the region (one ended 2pt past
+    `region.maxX`); **our own item is unfindable in `CGWindowList`**, because macOS hosts
+    NSStatusItem windows in the Control Center process, so every entry carries that
+    process's pid and window number — take our own rect from `NSWindow.frame`, and note
+    only `X` and `width` are comparable (`CGWindowBounds` is top-left origin,
+    `NSWindow.frame` bottom-left); `CGWindowList` bounds need no Screen Recording
+    permission, only window *titles* do. A **pinned** rung is the deliberate exception and
+    stays exempt — the one remaining path that can displace a neighbour.
 
 ## Spotify integration facts
 
