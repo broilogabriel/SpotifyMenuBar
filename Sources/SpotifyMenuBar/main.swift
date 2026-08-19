@@ -58,9 +58,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // The widest this item may be on the current bar, measured while it was at its
     // minimum width — the only moment nothing has been evicted yet, so the only moment
     // the reading is honest. nil means "not yet known", which forces the minimum rung.
+    //
+    // Can go stale HIGH: a status item added or removed by an already-running process
+    // (a Control Center toggle, a VPN client, a "hide icon" setting) fires none of the
+    // notifications this file observes, so a neighbour can vanish or appear without us
+    // re-measuring. The obvious-looking fix — clamp against a live reading inside
+    // `relayout` — is a trap: shrinking on a live number restores the neighbours we'd
+    // already evicted, which lowers the next live reading, which shrinks us again, a
+    // downward ratchet that ends permanently at `playPause`. Measuring only at the
+    // minimum rung is the only reading discipline that doesn't ratchet in either
+    // direction, so a stale-high ceiling is left to heal on the next real trigger
+    // instead of being "corrected" here.
     private var barCeiling: CGFloat?
     private var measuringCeiling = false
     private var ceilingAttempts = 0
+    // A trigger that lands while a cycle is already running carries newer information
+    // than the cycle it can't interrupt; remembered so the cycle re-enters (via the
+    // coalescer) once it finishes, instead of the trigger being silently dropped.
+    private var remeasureQueued = false
+    // Rate-limits remeasureCeiling(): most app launches/quits own no status item, and
+    // without this every one of them would still cost a visible shrink-and-regrow.
+    private var lastCeilingMeasurement: Date?
     // Coalesced separately from `pendingRefresh`, which covers only PlaybackStateChanged;
     // sharing one work item would let a track change cancel a pending measurement.
     private var pendingMeasure: DispatchWorkItem?
@@ -195,14 +213,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// Dock/undock, resolution change, or a Space switch can all change the region
-    /// this item has to fit into.
+    /// this item has to fit into. The immediate relayout is free — no Apple Event,
+    /// since `lastTrack` already has what it needs — so the region is corrected right
+    /// away rather than waiting on the 0.3s coalescer below.
     @objc func screenChanged() {
+        relayout(track: lastTrack.track, artist: lastTrack.artist)
         barContentsMaybeChanged()
     }
 
-    /// The bar's contents plausibly changed, so the cached ceiling is stale. Coalesced
-    /// because login-item startup delivers app-launch notifications in bursts, and each
-    /// one would otherwise cost a shrink-and-regrow blink.
+    /// The bar's contents plausibly changed, so the cached ceiling is stale. Coalesces
+    /// only bursts that land within this 0.3s window, not a whole login: login items
+    /// appear over several seconds, so expect a handful of sequential cycles at login,
+    /// not one.
     @objc func barContentsMaybeChanged() {
         pendingMeasure?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.remeasureCeiling() }
@@ -224,7 +246,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func pickDisplayMode(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String else { return }
         UserDefaults.standard.set(raw, forKey: "displayMode")
-        relayout(track: lastTrack.track, artist: lastTrack.artist)
+        // Not a bare relayout: leaving a pin re-enters Auto, and Auto must budget off a
+        // ceiling measured honestly under Auto, not whatever a pin left cached.
+        remeasureCeiling()
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -410,6 +434,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             + " region=\(NSStringFromRect(currentRegion()))"
             + " visible=\(statusItem.isVisible ? "Y" : "N")"
             + " windowFrame=\(w.map { NSStringFromRect($0.frame) } ?? "nil")"
+            // ceiling= is what the budget actually used (cached, honest); available= is
+            // the live reading, which is NOT stable by construction (it rises with our
+            // own width post-eviction) — watch ceiling= for "no ratchet", not available=.
+            + " ceiling=\(barCeiling.map { String(format: "%.1f", $0) } ?? "nil")"
             + " available=\(measuredAvailable().map { String(format: "%.1f", $0) } ?? "nil")"
         Self.layoutLog.notice("\(msg, privacy: .public)")
     }
@@ -457,7 +485,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// while we are oversized reflects neighbours we already evicted (measured: 91pt at
     /// 40pt wide versus 437pt at 282pt wide), so growing on that number ratchets.
     func remeasureCeiling() {
-        guard !measuringCeiling else { return }
+        // A newer trigger during an in-flight cycle carries information the cycle can't
+        // use yet — re-enter through the coalescer once it finishes, rather than losing it.
+        guard !measuringCeiling else { remeasureQueued = true; return }
+        // A pin makes `BarLayout.plan` return before it reads `available`, so the shrink
+        // below would not shrink and the reading would be taken at full pinned width —
+        // invalid by construction, and it would silently rot the cache for when Auto
+        // returns.
+        guard Settings.displayMode().pinnedRung == nil else {
+            barCeiling = nil
+            return
+        }
+        // Most app launches own no status item; without this, every launch and quit costs
+        // a visible shrink-and-regrow.
+        if let last = lastCeilingMeasurement, Date().timeIntervalSince(last) < 3 {
+            return
+        }
         measuringCeiling = true
         ceilingAttempts = 0
         barCeiling = nil                                       // forces the minimum rung
@@ -470,18 +513,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// window would reschedule forever.
     private func attemptCeilingMeasurement() {
         ceilingAttempts += 1
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+        // Escalating: the window server may need noticeably longer than one turn on a busy
+        // launch, and a fixed 0.08 x 6 gave up after less than half a second.
+        let delay = 0.08 * pow(2.0, Double(min(ceilingAttempts - 1, 4)))
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self else { return }
             if let measured = self.measuredAvailable() {
                 self.barCeiling = measured
+                self.lastCeilingMeasurement = Date()
                 self.measuringCeiling = false
                 self.relayout(track: self.lastTrack.track, artist: self.lastTrack.artist)
+                if self.remeasureQueued {
+                    self.remeasureQueued = false
+                    self.barContentsMaybeChanged()      // re-enters via the 0.3s coalescer
+                }
             } else if self.ceilingAttempts < 6 {
                 self.attemptCeilingMeasurement()
             } else {
-                // Give up for now and leave the ceiling unknown: the item stays minimal,
-                // which is wrong-but-safe. The next trigger tries again.
+                // Unknown ceiling means the item is stuck minimal, and nothing in the
+                // playback path re-measures. Try again later rather than stranding it.
                 self.measuringCeiling = false
+                self.remeasureQueued = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+                    self?.barContentsMaybeChanged()
+                }
             }
         }
     }
