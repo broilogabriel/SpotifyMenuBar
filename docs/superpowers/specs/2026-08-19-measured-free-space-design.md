@@ -47,10 +47,19 @@ unprompted and returned all 13 status-item windows with exact geometry.
 
 Two properties of the result that shape the design:
 
-- **All status items report owner "Control Centre"** (macOS hosts them in that process), so
-  identification by owner name is impossible. Identify our own item by
-  **`statusItem.button?.window?.windowNumber` matched against `kCGWindowNumber`** —
-  verified 2026-08-19 to correspond exactly.
+- **Our own item cannot be identified in the list at all — do not try.** macOS hosts
+  `NSStatusItem` windows inside the **Control Center** process: every entry reports Control
+  Center's pid (measured: our app pid 24578, the layer-25 window at our exact coordinates
+  pid 1126) and therefore Control Center's `kCGWindowNumber`. Matching
+  `NSWindow.windowNumber` **never succeeds** and produced a permanently-nil measurement
+  when first implemented. `NSWindow.windowNumber` does correspond to `kCGWindowNumber` for
+  an ordinary window you create yourself — that correspondence does not extend to a
+  status-item window, and assuming it did was the original error here.
+- **Take our own rect from `NSWindow.frame` instead**, and use `CGWindowList` purely for the
+  collection of other items' `minX`. `X` and `width` are directly comparable between the two
+  coordinate systems, which is all `availableWidth` needs. Our own window still appears in
+  the list as a Control-Center-owned entry at the same `x`/`width`, so the invariance
+  argument in section 3 is unaffected.
 - **Do NOT match on frames.** `CGWindowBounds` uses a **top-left** origin while
   `NSWindow.frame` uses **bottom-left**; a test window at `NSWindow` y=300 reported
   `CGWindow` Y=793. `X` and `Width` agree, `Y` does not, so frame equality silently never
@@ -80,12 +89,18 @@ server. Returns nil when our own window is not yet placed.
 
 ```
 func statusItemFrames() -> (own: CGRect, all: [CGRect])?
-    layer  = CGWindowLevelForKey(.statusWindow)      // == 25 here, but never hardcode it
+    region  = currentRegion()
+    ownFrame = statusItem.button?.window?.frame
+    nil unless ownFrame horizontally intersects region      // not yet placed
+    layer   = CGWindowLevelForKey(.statusWindow)            // == 25 here, never hardcode
     windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID)
-    keep    = windows where layer matches AND bounds intersect this screen's region
-    own     = the entry matching statusItem.button?.window?.frame
-    nil unless own is found
+    all     = windows where layer matches AND bounds intersect region
+    nil if all is empty                                     // query gave nothing usable
+    own     = CGRect(x: ownFrame.minX, width: ownFrame.width)
 ```
+
+The "not yet placed" test is a region intersection, not a window lookup: an uncommitted
+status window sits outside the bar entirely (observed `{{0, -33}, {84, 33}}`).
 
 ### 2. Arithmetic — pure, Core side, unit-tested
 

@@ -21,7 +21,7 @@
 - No AI attribution anywhere. Conventional Commits, imperative, lower-case, no trailing period. Comment the *why*, not the *what*.
 - **Baseline: 83 checks pass today.** Every count below is cumulative and was produced by running a prototype, not derived by hand.
 - **Never edit an existing expected value to make a check pass.** If a refactor breaks one, the refactor is wrong. Call-site updates (adding a new argument) are not expectation changes and are expected in Task 3.
-- Verified environment facts you may rely on: `CGWindowLevelForKey(.statusWindow) == 25`; `NSWindow.windowNumber` corresponds exactly to `kCGWindowNumber` **once the window is committed to the window server**; `CGWindowBounds` uses a **top-left** origin while `NSWindow.frame` uses **bottom-left**, so only `X` and `Width` are comparable.
+- Verified environment facts you may rely on: `CGWindowLevelForKey(.statusWindow) == 25`; **our own status item cannot be located in `CGWindowList`** — macOS hosts NSStatusItem windows in the Control Center process, so every entry carries Control Center's pid and window number (`NSWindow.windowNumber` matching never succeeds; it works only for ordinary windows you create yourself); `CGWindowBounds` uses a **top-left** origin while `NSWindow.frame` uses **bottom-left**, so only `X` and `Width` are comparable.
 
 ---
 
@@ -507,8 +507,12 @@ Append to the "Hard-won design decisions — do not regress these" list:
     is the only reason the grow-in terminates without hysteresis; and free space is derived
     from the occupied block's **left edge**, not a sum of widths, because items can overhang
     the region (one ended 2pt past `region.maxX`). Identify our own window by
-    `windowNumber` ↔ `kCGWindowNumber` — **never** by frame, since `CGWindowBounds` is
-    top-left origin and `NSWindow.frame` is bottom-left. `CGWindowList` bounds need no
+    taking our own rect from `NSWindow.frame` and using `CGWindowList` only for other
+    items' `minX` — **our own item is unfindable in that list**, because macOS hosts
+    NSStatusItem windows in the Control Center process, so every entry carries Control
+    Center's pid and window number. Only `X` and `width` are comparable anyway
+    (`CGWindowBounds` is top-left origin, `NSWindow.frame` bottom-left). `CGWindowList`
+    bounds need no
     Screen Recording permission; only window *titles* do. A **pinned** rung is the
     deliberate exception and stays exempt.
 ```
@@ -548,7 +552,7 @@ git commit -m "docs: document measured free space as the harder ceiling"
 |---|---|
 | Problem / the 205-vs-196 measurement | Task 3 (the cap is the fix) |
 | Key finding: `CGWindowList` needs no permission | Task 2 |
-| Identify by `windowNumber`, never by frame | Task 2 Step 1, `AGENTS.md` 19 in Task 6 |
+| Own rect from `NSWindow.frame`; never look ourselves up in `CGWindowList` | Task 2 Step 1, `AGENTS.md` 19 in Task 6 |
 | Window must be committed before it is listed | Task 2 (nil return), Task 4 (grow-in) |
 | 1. Measurement (AppKit) | Task 2 |
 | 2. Arithmetic (pure, Core) | Task 1 |
