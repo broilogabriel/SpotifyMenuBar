@@ -179,6 +179,12 @@ Two further facts worth keeping:
   config; the item topped out at 351pt and stayed visible. Crowding the bar with other
   apps is the only way to reproduce.
 
+#### Superseded by
+
+`docs/superpowers/specs/2026-08-19-measured-free-space-design.md`, which measures other
+apps' status-item geometry directly via `CGWindowListCopyWindowInfo` instead of inferring
+anything from our own window. That is the mechanism this section was reaching for.
+
 #### What ships instead
 
 The computed ceiling alone, which sections 1–4 describe and which is complete on its own
