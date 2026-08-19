@@ -251,10 +251,10 @@ commit the spec, do it for real.
 - Apple Music support, album art, configurable hotkeys, a preferences UI.
 - ~~Clip-detection / auto-demotion feedback loop~~ — **probed and abandoned**, see
   decision #16. Not future work; the premise was wrong.
-- **Headroom-gap sizing** is the open idea worth pursuing instead. The probe found that
-  `windowFrame.minX − region.minX` tracks our own width exactly, making it a *measurable*
-  estimate of how much further the item could grow — the quantity the budget currently
-  guesses at with a fixed fraction. Caveat: that gap also contains any items to our left,
-  so it is headroom plus leftward neighbours, not pure free space.
+- A status item added or removed by an **already-running** process (Control Center
+  toggles, a VPN client's "hide icon" setting) fires none of the notifications that
+  re-establish the ceiling, so it can sit stale-high until the next launch/quit/screen/Space
+  event. See decision #19 — and note the obvious fix is a trap: clamping on a live reading
+  inside `relayout` ratchets *downward* to a permanent play button.
 
 If you add any of these, update `README.md` and this file.
