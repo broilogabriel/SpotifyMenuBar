@@ -254,6 +254,29 @@ to making these artifacts local-only; that default does not apply to this repo. 
 one there, it is a mistake — remove it rather than working around it. When a skill says to
 commit the spec, do it for real.
 
+## Verifying the no-eviction guarantee (`verify-no-eviction.sh`)
+
+`./verify-no-eviction.sh` is the acceptance test for decision #20, and the only check that
+exercises the guarantee this app exists to keep. It builds, runs the unit checks, installs
+the bundle, then compares the count of status windows in the region with and without our
+item running.
+
+**The invariant: with the app running the count must be exactly one MORE than without it.**
+Our item is one window; if the total does not rise, we gained one and somebody else lost one.
+Self-calibrating, so there are no hardcoded counts and it holds on any bar or display.
+
+It aborts if `displayMode` is pinned, because a pin bypasses the ceiling by design and would
+invalidate the test rather than fail it honestly.
+
+Confirmed bidirectional 2026-08-20 — a test that cannot fail proves nothing:
+
+| `barReserve` | count | our window | verdict |
+|---|---|---|---|
+| 40 (default) | 12 -> 13 | 156 | PASS |
+| 0 | 12 -> 12 | 195 | FAIL, icon evicted |
+
+Run it before opening a PR that touches layout, and on any display you have not tested.
+
 ## Packaging (`build-app.sh`)
 
 - `build-app.sh` does a release build, assembles `SpotifyMenuBar.app` from the
