@@ -234,12 +234,30 @@ unreachable; what remains is simply the human checks in sections 1–3 and 5.
 
 ## 5. Measured free space (added 2026-08-19, second plan)
 
-The status item now caps itself at the free space it can actually measure, instead of a
-fixed 25% of the region. Everything machine-checkable is checked (97/97), and I verified the
-mechanism at runtime by reading the unified log. **One thing was never directly observed and
-needs you: the headline acceptance test.**
+The status item caps itself at the free space it can actually measure, instead of a fixed
+25% of the region. 105/105 machine checks pass.
 
-### 5.1 The check that matters — never displace a neighbour
+### 5.1 The headline test — FAILED 2026-08-20, then fixed and verified
+
+**This test found a real bug.** On a crowded bar the item hid Scroll Reverser's icon with
+`displayMode=auto` — the exact failure the design was written to prevent.
+
+Root cause: `availableWidth` treated `region.minX` as the leftmost pixel an item may occupy.
+macOS reserves ~26pt there, so free space was over-reported by that margin, which is wider
+than an icon. The item stayed inside its own measured ceiling and evicted a neighbour anyway.
+Full measurements in `specs/2026-08-19-measured-free-space-design.md` section 3a and
+`AGENTS.md` decision #20.
+
+**Now verified, and by a better method than eyeballing.** The count of status windows inside
+the region is a direct eviction signal. Sampling it at 100ms across a launch:
+
+| | before the fix | after |
+|---|---|---|
+| Count after launch | 13 → **12** within 200ms (a neighbour hidden) | **13, stable** |
+| Ceiling measured | 184 | 146 |
+| Window granted | 194 (true limit was 164) | 157 |
+
+If you want to re-run it on a different bar or display:
 
 1. `./build-app.sh`, quit the running copy, replace `/Applications/SpotifyMenuBar.app`.
 2. `defaults write com.local.SpotifyMenuBar debugLayout -bool YES`
@@ -248,9 +266,10 @@ needs you: the headline acceptance test.**
 4. Crowd the menu bar until it is nearly full.
 5. Launch the app. **Confirm no existing menu-bar icon disappears.**
 
-Expect the item to settle **small** — controls-only or play/pause-only. That is the honest
-cost of never evicting anyone, not a bug. `Display` overrides it if you would rather have the
-width, and that override is the one remaining path that can still displace something.
+Expect the item to settle **small**, and smaller than before the fix — the reserve costs
+real width. That is the honest cost of never evicting anyone. `Display` overrides it if you
+would rather have the width, and that override is the one remaining path that can still
+displace something.
 
 ### 5.2 Read the log
 
@@ -275,11 +294,16 @@ Two fields to distinguish:
   real `ceiling=`, then the settled rung.
 - **No ratchet:** across several track changes, `ceiling=` holds the *same* number and the
   rung does not creep upward. Watch `ceiling=`, not `available=`.
-- **The item fits:** the width component of `windowFrame=` should not exceed `ceiling`.
-  The log prints the whole rect — `windowFrame={{x,y},{width,height}}` — so read the third
-  number; there is no `windowW=` field to grep for. macOS grants a window 16pt wider than
-  the requested `length`, and the ceiling is converted to account for it. Observed settled
-  state was `length=175.0`, `windowFrame={{…},{191,33}}`, `ceiling=183.0`.
+- **The item fits:** the width component of `windowFrame=` should not exceed
+  `ceiling` + 16. The log prints the whole rect — `windowFrame={{x,y},{width,height}}` — so
+  read the third number; there is no `windowW=` field to grep for. macOS grants a window
+  16pt wider than the requested `length`. Observed settled state after the reserve fix:
+  `length=141.0`, `windowFrame={{1116,1084},{157,33}}`, `ceiling=146.0`.
+- **The reserve is applied:** `ceiling` should be about 40pt below the gap you would compute
+  by hand from `region` and the leftmost icon. That 40pt is `Config.barReserve`; without it
+  the item evicts a neighbour. `defaults write com.local.SpotifyMenuBar barReserve -float 0`
+  reproduces the bug on demand, which is the fastest way to confirm the fix is what is
+  holding the line.
 - **Bar changes are picked up:** quit another menu-bar app and one shrink-and-regrow should
   happen within a second or so, ending at a possibly larger rung. Rate-limited to about one
   per 3s.

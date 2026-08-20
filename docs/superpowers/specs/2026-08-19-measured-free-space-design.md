@@ -106,13 +106,56 @@ status window sits outside the bar entirely (observed `{{0, -33}, {84, 33}}`).
 ### 2. Arithmetic — pure, Core side, unit-tested
 
 ```
-BarLayout.availableWidth(own: CGRect, all: [CGRect], region: CGRect) -> CGFloat
+BarLayout.availableWidth(own: CGRect, all: [CGRect], region: CGRect,
+                         reserve: CGFloat) -> CGFloat
     let leftEdge = all.map(\.minX).min() ?? own.minX
-    return max(own.width + (leftEdge - region.minX), 0)
+    return max(own.width + (leftEdge - region.minX) - reserve, 0)
 ```
 
 `own` is included in `all`; that is intentional and required for the stability property
 below.
+
+**`reserve` was added 2026-08-20, and the version without it was WRONG** — see section 3a.
+Shipping `own.width + (leftEdge - region.minX)` treats `region.minX` as the leftmost pixel
+an item may occupy, which macOS does not honour. It is a required parameter, not a
+defaulted one, so no call site can silently omit it.
+
+### 3a. `region.minX` is not the left limit — measured 2026-08-20
+
+The formula above, as originally shipped, **over-reports free space by the margin macOS
+reserves at the left edge of `auxiliaryTopRightArea`.** The over-report equals that margin
+exactly, and the margin is wider than an icon, so the item stays inside its own measured
+ceiling and still makes macOS hide a neighbour. It did: Scroll Reverser's icon, with
+`displayMode=auto`.
+
+Measured on the notched built-in display:
+
+| Quantity | Value |
+|---|---|
+| Region (`auxiliaryTopRightArea`) | 956 → 1728, 772pt |
+| Occupied block with our item absent, all icons visible | 1158 → 1730 (572pt), gap 202pt |
+| Leftmost x macOS will actually pack to, bar crowded | **984–994** — never 956 |
+| Max block span observed | 746 of 772 → real reserve ≈ **26pt** |
+| Ceiling the formula reported at minimum width | 202 (window) |
+| True limit for our window | 1158 − 994 = **164** |
+| Window we took | 194 → 30pt over → one 30pt icon evicted |
+
+`202 − 164 = 38 = leftEdge − region.minX`. No residual: the whole error is the reserve.
+
+Not menu overflow — the reserve did not track the frontmost app's menus (Finder 992,
+Terminal 992, Safari 984).
+
+**The eviction signal exists after all.** Section 5 of the 2026-08-18 spec concluded clip
+detection was unimplementable. That holds only for watching *our own* window. The **count of
+status windows inside the region** moves on eviction: measured 13 → 12 within 200ms of
+launch, and back to 13 once we shrank. That is what verified this fix, and it makes a
+self-calibrating closed loop real future work (AGENTS.md → *Things NOT yet done*). The
+constant was chosen over the loop because the loop's correction is visible — the neighbour's
+icon blinks before we undo it.
+
+`Config.barReserve` is 40pt, not 26: headroom for displays that reserve more than this one.
+Too small costs a neighbour's icon; too large costs at most one rung. Override with
+`defaults write com.local.SpotifyMenuBar barReserve -float <pt>`; 0 reproduces the bug.
 
 ### 3. The invariance claim was FALSE — measured 2026-08-19
 
