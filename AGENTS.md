@@ -140,6 +140,25 @@ will likely reintroduce the bug noted.
     `NSWindow.frame` bottom-left); `CGWindowList` bounds need no Screen Recording
     permission, only window *titles* do. A **pinned** rung is the deliberate exception and
     stays exempt — the one remaining path that can displace a neighbour.
+    **A ceiling measured this way is still not sufficient on its own — see #20.**
+20. **`region.minX` is not the leftmost pixel a status item may occupy, so a raw
+    gap measurement over-reports free space.** macOS keeps a margin at the left edge of
+    `auxiliaryTopRightArea`, and the over-report equals that margin exactly — which is
+    wider than an icon, so the item can sit *inside* its own measured ceiling and still
+    make macOS hide a neighbour. That is not a hypothetical: it shipped, and hid Scroll
+    Reverser's icon on 2026-08-20 with `displayMode=auto`.
+    Measured that day on the notched built-in display: with the bar crowded the occupied
+    block bottomed out at **x=984..994** against a region starting at **956** — a real
+    reserve of ~26pt (max observed block span 746 of 772). The item measured a 202pt window
+    ceiling, took 194, and evicted a 30pt neighbour; the true limit was 164, and
+    `202 − 164 = 38 = leftEdge − region.minX`. The reserve did **not** move with the
+    frontmost app's menus (Finder 992, Terminal 992, Safari 984), so it is not menu overflow.
+    `Config.barReserve` (40pt, `defaults` key `barReserve`) is subtracted inside
+    `BarLayout.availableWidth`. **Never reintroduce a call that omits it** — the parameter
+    is required, not defaulted, for exactly that reason. Setting it to 0 reproduces the bug.
+    Verified by counting in-region status windows across a launch: **13 and stable** after
+    the fix, where before it dropped to 12 within 200ms. That count is the eviction signal
+    decision #16 lacked (see *Things NOT yet done*).
 
 ## Spotify integration facts
 
@@ -249,8 +268,14 @@ commit the spec, do it for real.
 
 - Proper Developer ID signing + notarization (currently ad-hoc, personal use only).
 - Apple Music support, album art, configurable hotkeys, a preferences UI.
-- ~~Clip-detection / auto-demotion feedback loop~~ — **probed and abandoned**, see
-  decision #16. Not future work; the premise was wrong.
+- Clip-detection / auto-demotion feedback loop — **abandoned as designed** (decision #16:
+  watching our *own* window can never work, because we are the cause and not the clipped
+  party). But the signal it needed does exist and was found on 2026-08-20: **the count of
+  status windows inside the region drops when macOS hides a neighbour** (measured 13 → 12 on
+  eviction, and back to 13 when we shrank). A closed loop on that count is genuine future
+  work — it would self-calibrate `Config.barReserve` away, at the cost of one visible blink
+  on the eviction path and of disambiguating innocent count changes. Decision #20 took the
+  simpler constant instead.
 - A status item added or removed by an **already-running** process (Control Center
   toggles, a VPN client's "hide icon" setting) fires none of the notifications that
   re-establish the ceiling, so it can sit stale-high until the next launch/quit/screen/Space
