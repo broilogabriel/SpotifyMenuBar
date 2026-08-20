@@ -9,6 +9,11 @@
 # That invariant is self-calibrating: no hardcoded counts, so it holds on any bar,
 # any icon set, and any display. See AGENTS.md decision #20.
 #
+# Why this exists as a script and not a unit check: Config.barReserve is an empirical
+# constant measured on ONE display. No unit test can validate it, because it is a claim
+# about how macOS packs the bar, not about our arithmetic. This is the only thing that
+# tests that constant against reality -- run it on any display you have not tried.
+#
 # Plain ASCII on purpose, same as build-app.sh.
 set -euo pipefail
 
@@ -16,8 +21,31 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${DIR}"
 
 APP="/Applications/SpotifyMenuBar.app"
-WORK="$(mktemp -d)"
-trap 'rm -rf "${WORK}"' EXIT
+MODE="measure"
+
+usage() {
+  cat <<'USAGE'
+Usage: ./verify-no-eviction.sh [--install] [--help]
+
+  (no flags)  Measure only, against the already-installed /Applications bundle.
+              Non-destructive to files. Still quits and relaunches the app, which
+              is unavoidable: the baseline is the bar WITHOUT our item.
+
+  --install   Build first, then measure. This additionally:
+                - runs swift build and the unit checks
+                - runs ./build-app.sh
+                - DELETES /Applications/SpotifyMenuBar.app and replaces it
+              Use this as the pre-PR gate. Use the default on a new display.
+USAGE
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --install) MODE="install"; shift ;;
+    --help|-h) usage; exit 0 ;;
+    *) echo "Unknown argument: $1"; echo; usage; exit 2 ;;
+  esac
+done
 
 # A pinned rung deliberately bypasses the measured ceiling, so it would invalidate
 # the whole test rather than fail it honestly.
@@ -28,14 +56,24 @@ if [ "${PIN}" != "auto" ]; then
   exit 2
 fi
 
-echo "[1/5] Unit checks..."
-swift build > /dev/null
-swift run SpotifyMenuBarCoreTests | tail -1
+if [ "${MODE}" = "install" ]; then
+  echo "[build] Unit checks..."
+  swift build > /dev/null
+  swift run SpotifyMenuBarCoreTests | tail -1
+  echo "[build] Assembling and installing (replaces ${APP})..."
+  ./build-app.sh > /dev/null
+  rm -rf "${APP}"
+  mv "${DIR}/SpotifyMenuBar.app" /Applications/
+fi
 
-echo "[2/5] Building the bundle..."
-./build-app.sh > /dev/null
-rm -rf "${APP}"
-mv "${DIR}/SpotifyMenuBar.app" /Applications/
+if [ ! -d "${APP}" ]; then
+  echo "ABORT: ${APP} is not installed, so there is nothing to measure."
+  echo "       Run with --install to build and install it first."
+  exit 2
+fi
+
+WORK="$(mktemp -d)"
+trap 'rm -rf "${WORK}"' EXIT
 
 cat > "${WORK}/probe.swift" <<'SWIFT'
 import AppKit
@@ -71,21 +109,21 @@ print(String(format: "%d,%.0f,%.0f,%.0f", rects.count, leftEdge, leftEdge - regi
 SWIFT
 xcrun swiftc -O "${WORK}/probe.swift" -o "${WORK}/probe" 2>/dev/null
 
-echo "[3/5] Sampling the bar WITHOUT our item..."
+echo "[1/3] Sampling the bar WITHOUT our item..."
 osascript -e 'quit app "SpotifyMenuBar"' 2>/dev/null || true
 sleep 3
 BEFORE="$(${WORK}/probe)"
 N0="$(echo "${BEFORE}" | cut -d, -f1)"
 echo "      count=${N0}  leftEdge=$(echo "${BEFORE}" | cut -d, -f2)  gap=$(echo "${BEFORE}" | cut -d, -f3)"
 
-echo "[4/5] Launching and letting the ceiling settle..."
+echo "[2/3] Launching and letting the ceiling settle..."
 open -a "${APP}"
 sleep 6
 AFTER="$(${WORK}/probe)"
 N1="$(echo "${AFTER}" | cut -d, -f1)"
 echo "      count=${N1}  leftEdge=$(echo "${AFTER}" | cut -d, -f2)  gap=$(echo "${AFTER}" | cut -d, -f3)  ourWindow=$(echo "${AFTER}" | cut -d, -f4)"
 
-echo "[5/5] Verdict"
+echo "[3/3] Verdict"
 EXPECTED=$((N0 + 1))
 if [ "${N1}" -eq "${EXPECTED}" ]; then
   echo ""

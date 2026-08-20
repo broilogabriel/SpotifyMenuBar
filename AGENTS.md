@@ -257,9 +257,21 @@ commit the spec, do it for real.
 ## Verifying the no-eviction guarantee (`verify-no-eviction.sh`)
 
 `./verify-no-eviction.sh` is the acceptance test for decision #20, and the only check that
-exercises the guarantee this app exists to keep. It builds, runs the unit checks, installs
-the bundle, then compares the count of status windows in the region with and without our
-item running.
+exercises the guarantee this app exists to keep. It compares the count of status windows in
+the region with and without our item running.
+
+Two modes, because the two jobs have different costs:
+
+- **no flags — measure only.** Runs against the installed `/Applications` bundle, touches no
+  files. Use this on any display you have not tested. It still quits and relaunches the app,
+  which is unavoidable: the baseline is the bar *without* our item.
+- **`--install`** — also runs `swift build`, the unit checks, and `build-app.sh`, then
+  **deletes and replaces `/Applications/SpotifyMenuBar.app`**. This is the pre-PR gate.
+
+**Why a script and not a unit check:** `Config.barReserve` is an empirical constant measured
+on one display. No unit test can validate it, because it is a claim about how macOS packs the
+bar rather than about our arithmetic. This is the only thing that tests the constant against
+reality.
 
 **The invariant: with the app running the count must be exactly one MORE than without it.**
 Our item is one window; if the total does not rise, we gained one and somebody else lost one.
@@ -275,7 +287,9 @@ Confirmed bidirectional 2026-08-20 — a test that cannot fail proves nothing:
 | 40 (default) | 12 -> 13 | 156 | PASS |
 | 0 | 12 -> 12 | 195 | FAIL, icon evicted |
 
-Run it before opening a PR that touches layout, and on any display you have not tested.
+Run `--install` before opening a PR that touches layout, and the default mode on any display
+you have not tested. The invariant is self-calibrating, so the counts move with the bar: the
+same script read 12 -> 13 on a crowded bar and 8 -> 9 an hour later, both PASS.
 
 ## Packaging (`build-app.sh`)
 
