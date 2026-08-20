@@ -34,6 +34,14 @@ public struct Settings {
         return min(max(raw, 0.10), 1.0)
     }
 
+    /// Clamped to [0, 200]: zero restores the pre-fix over-reporting (useful for
+    /// diagnosing), and the cap stops an absurd write pinning the item at its floor
+    /// forever. Read fresh on every measurement, like the rest of `Settings`.
+    public static func barReserve(_ defaults: UserDefaults = .standard) -> CGFloat {
+        let raw = defaults.object(forKey: "barReserve") as? Double ?? Double(Config.barReserve)
+        return CGFloat(min(max(raw.isFinite ? raw : Double(Config.barReserve), 0), 200))
+    }
+
     public static func displayMode(_ defaults: UserDefaults = .standard) -> DisplayMode {
         DisplayMode.from(defaults.string(forKey: "displayMode"))
     }

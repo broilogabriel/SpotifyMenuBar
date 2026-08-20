@@ -64,9 +64,17 @@ public enum BarLayout {
     /// status items can overhang the region (measured: one ended 2pt past `region.maxX`)
     /// and can sit with gaps between them. A right-edge clamp is unnecessary here —
     /// `plan` already clamps the budget to `regionWidth`.
-    public static func availableWidth(own: CGRect, all: [CGRect], region: CGRect) -> CGFloat {
+    ///
+    /// `reserve` exists because **`region.minX` is not the leftmost pixel an item may
+    /// occupy** — macOS keeps a margin there. Without it this function over-reports free
+    /// space by exactly that margin, which shipped as the eviction bug it was written to
+    /// prevent: measured 2026-08-20, it reported a 202pt window ceiling where the true
+    /// limit was 164, so the item stayed inside its own budget and still hid a neighbour's
+    /// icon. Pass `Config.barReserve` unless you are deliberately reproducing that.
+    public static func availableWidth(own: CGRect, all: [CGRect], region: CGRect,
+                                      reserve: CGFloat) -> CGFloat {
         let leftEdge = all.map(\.minX).min() ?? own.minX
-        return max(own.width + (leftEdge - region.minX), 0)
+        return max(own.width + (leftEdge - region.minX) - reserve, 0)
     }
 
     /// Keep only the status-item rects that belong to `region`, converting from

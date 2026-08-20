@@ -19,4 +19,16 @@ public enum Config {
     /// Share of the status-item region this one item may claim. 0.25 of a 772pt
     /// region leaves ~119pt of text (~17 chars at 13pt), close to `maxTrack`.
     public static let maxWidthFraction = 0.25
+    /// Width at the LEFT edge of the status-item region that macOS will not pack into,
+    /// and which `region.minX` therefore over-reports as free.
+    ///
+    /// Measured 2026-08-20 on the notched built-in display: with the bar crowded the
+    /// occupied block bottomed out at x=984..994 against a region starting at 956, so the
+    /// real reserve is ~26pt (max observed block span 746 of a 772pt region). It did not
+    /// move with the frontmost app's menus (Finder 992, Terminal 992, Safari 984).
+    ///
+    /// 40 rather than 26 buys headroom for displays that reserve more than this one does.
+    /// Getting this too small costs a neighbour's icon; too large costs at most one rung.
+    /// See AGENTS.md decision #20.
+    public static let barReserve: CGFloat = 40
 }

@@ -263,27 +263,27 @@ let neighbours = [us,
                   CGRect(x: 1152, y: 1084, width: 34, height: 33),
                   CGRect(x: 1586, y: 1084, width: 144, height: 33)]
 
-expectClose(Double(BarLayout.availableWidth(own: us, all: neighbours, region: regionR)),
+expectClose(Double(BarLayout.availableWidth(own: us, all: neighbours, region: regionR, reserve: 0)),
             196, "leftmost item: our own width plus the free block")
 
 // An item to our left eats the room we could grow into.
 let leftOfUs = CGRect(x: 1000, y: 1084, width: 68, height: 33)
-expectClose(Double(BarLayout.availableWidth(own: us, all: neighbours + [leftOfUs], region: regionR)),
+expectClose(Double(BarLayout.availableWidth(own: us, all: neighbours + [leftOfUs], region: regionR, reserve: 0)),
             128, "an item to our left reduces what we can claim")
 
 // The right-hand overhang must not change the answer — that is exactly why the occupied
 // block's LEFT edge is used instead of a sum of widths.
 let overhanging = Array(neighbours.dropLast()) + [CGRect(x: 1586, y: 1084, width: 999, height: 33)]
-expectClose(Double(BarLayout.availableWidth(own: us, all: overhanging, region: regionR)),
+expectClose(Double(BarLayout.availableWidth(own: us, all: overhanging, region: regionR, reserve: 0)),
             196, "a right-hand overhang does not change the result")
 
-expectClose(Double(BarLayout.availableWidth(own: us, all: [], region: regionR)),
+expectClose(Double(BarLayout.availableWidth(own: us, all: [], region: regionR, reserve: 0)),
             196, "a degenerate empty list falls back to our own position")
 
 // An item overhanging the region's LEFT edge must not yield a negative width.
 expectClose(Double(BarLayout.availableWidth(own: us,
                                             all: [CGRect(x: 100, y: 1084, width: 40, height: 33)],
-                                            region: regionR)),
+                                            region: regionR, reserve: 0)),
             0, "an item left of the region clamps to zero")
 
 // Arithmetic only: with a fixed right edge and a fixed set of neighbours, widening trades
@@ -296,7 +296,7 @@ for w in stride(from: CGFloat(24), through: 400, by: 4) {
     // The item's right edge is fixed; width grows leftward, so minX moves left.
     let grown = CGRect(x: us.maxX - w, y: us.minY, width: w, height: us.height)
     let others = neighbours.filter { $0 != us } + [grown]
-    if abs(BarLayout.availableWidth(own: grown, all: others, region: regionR) - 196) > 0.001 {
+    if abs(BarLayout.availableWidth(own: grown, all: others, region: regionR, reserve: 0) - 196) > 0.001 {
         availableStable = false
     }
 }
@@ -353,5 +353,48 @@ expect(BarLayout.statusWindows(bounds: [(x: 1068, y: 2000, width: 84, height: 33
 // An empty input yields an empty result.
 expect(BarLayout.statusWindows(bounds: [], region: regionR, primaryMaxY: primaryMaxY).isEmpty,
        true, "an empty input yields an empty result")
+
+// MARK: availableWidth — the reserved left margin (regression, measured 2026-08-20)
+
+// macOS never packs status items flush to `region.minX`. Measured on the notched built-in
+// display: with the bar crowded, the occupied block bottomed out at x=984..994 against a
+// region starting at 956 — a reserve of roughly 26pt that `region.minX` does not describe.
+//
+// The failure this reproduces: our item measured a 202pt window ceiling, took 194, stayed
+// inside its own budget, and still evicted a neighbour, because the true limit was 164.
+// The over-report equalled the reserve exactly.
+let barWithoutUs = CGRect(x: 1158, y: 1084, width: 572, height: 33)   // block, everything visible
+let usAtMinimum = CGRect(x: 1118, y: 1084, width: 40, height: 33)     // our window at the floor
+let atMinimum = [usAtMinimum, barWithoutUs]
+
+// Without a reserve the formula reports 202 — the number that caused the eviction.
+expectClose(Double(BarLayout.availableWidth(own: usAtMinimum, all: atMinimum,
+                                           region: regionR, reserve: 0)),
+            202, "no reserve reproduces the over-report that evicted a neighbour")
+
+// The measured true limit was 164pt of window. A 40pt reserve lands at 162 — under it.
+let withReserve = BarLayout.availableWidth(own: usAtMinimum, all: atMinimum,
+                                          region: regionR, reserve: Config.barReserve)
+expectClose(Double(withReserve), 162, "the default reserve brings the ceiling under the true limit")
+expect(withReserve <= 164, true, "the reserved ceiling never exceeds the measured true limit")
+
+// A reserve wider than everything available floors at zero rather than going negative.
+expectClose(Double(BarLayout.availableWidth(own: usAtMinimum, all: atMinimum,
+                                           region: regionR, reserve: 9999)),
+            0, "an oversized reserve clamps to zero")
+
+// MARK: Settings.barReserve
+
+let rd = UserDefaults(suiteName: "SpotifyMenuBarTests.reserve")!
+rd.removePersistentDomain(forName: "SpotifyMenuBarTests.reserve")
+expectClose(Double(Settings.barReserve(rd)), Double(Config.barReserve),
+            "an unset reserve falls back to the Config default")
+rd.set(-10, forKey: "barReserve")
+expectClose(Double(Settings.barReserve(rd)), 0, "a negative reserve clamps to zero")
+rd.set(5000, forKey: "barReserve")
+expectClose(Double(Settings.barReserve(rd)), 200, "an absurd reserve clamps to the cap")
+rd.set(26, forKey: "barReserve")
+expectClose(Double(Settings.barReserve(rd)), 26, "a sane reserve is honoured")
+rd.removePersistentDomain(forName: "SpotifyMenuBarTests.reserve")
 
 summarize()

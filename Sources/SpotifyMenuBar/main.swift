@@ -388,7 +388,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Measured free space, or nil when the item is not yet placed.
     func measuredAvailable() -> CGFloat? {
         guard let f = statusItemFrames() else { return nil }
-        let windowSpace = BarLayout.availableWidth(own: f.own, all: f.all, region: f.region)
+        let windowSpace = BarLayout.availableWidth(own: f.own, all: f.all, region: f.region,
+                                                   reserve: Settings.barReserve())
         // The ceiling is spent as `statusItem.length`, but it is measured in window widths:
         // macOS grants a window 16pt wider than the requested length (measured at every
         // rung: 24->40, 68->84, 187.5->204, 266->282). Without this conversion every
