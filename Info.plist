@@ -11,9 +11,9 @@
     <key>CFBundleExecutable</key>
     <string>SpotifyMenuBar</string>
     <key>CFBundleVersion</key>
-    <string>1.1.0</string> <!-- x-release-please-version -->
+    <string>1.2.0</string> <!-- x-release-please-version -->
     <key>CFBundleShortVersionString</key>
-    <string>1.1.0</string> <!-- x-release-please-version -->
+    <string>1.2.0</string> <!-- x-release-please-version -->
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>
