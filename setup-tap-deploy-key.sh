@@ -12,7 +12,10 @@ TAP_REPO="broilogabriel/homebrew-tap"
 SECRET="TAP_DEPLOY_KEY"
 VAULT="${OP_VAULT:-}"
 
-if ! op whoami >/dev/null 2>&1; then
+# `op vault list` rather than `op whoami`: it triggers the desktop-app unlock
+# instead of reporting a stale session, so it does not abort in the case where op
+# would simply have prompted for Touch ID.
+if ! op vault list >/dev/null 2>&1; then
     echo "op is not signed in. Run 'op signin', then re-run this script." >&2
     exit 1
 fi
@@ -30,7 +33,7 @@ else
     # --ssh-generate-key makes 1Password generate the pair. Nothing is written
     # here, so there is no local file to forget about deleting.
     op item create --category "SSH Key" --title "${ITEM}" \
-        --vault "${VAULT}" --ssh-generate-key >/dev/null
+        --vault "${VAULT}" --ssh-generate-key=ed25519 >/dev/null
     echo "      generated a new Ed25519 pair in the vault"
 fi
 
@@ -49,6 +52,8 @@ fi
 
 echo "[3/4] Copying the private half into the ${SECRET} secret..."
 # Never argv (visible in ps), never a file. `op run` masks the value in output.
+# ?ssh-format=openssh is required, not cosmetic: verified 2026-08-21 that the plain
+# reference returns PKCS#8, which ssh in the runner cannot use.
 KEY="op://${VAULT}/${ITEM}/private key?ssh-format=openssh" \
 op run -- sh -c '
     case "${KEY}" in
