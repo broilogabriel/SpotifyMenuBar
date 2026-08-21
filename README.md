@@ -80,6 +80,31 @@ Notes:
   `build-app.sh` re-signs it, which may re-trigger the one-time "control Spotify"
   consent prompt.
 
+## Install with Homebrew
+
+```bash
+brew install broilogabriel/tap/spotifymenubar
+ln -sfn "$(brew --prefix)/opt/spotifymenubar/SpotifyMenuBar.app" /Applications/SpotifyMenuBar.app
+open /Applications/SpotifyMenuBar.app
+```
+
+The formula **builds from source** on your machine rather than downloading a
+binary. That is deliberate: a locally compiled bundle never gets the
+`com.apple.quarantine` attribute, so Gatekeeper never blocks it and the ad-hoc
+signature is enough. A downloaded build would need Developer ID signing and
+notarization to launch at all.
+
+The `/Applications` symlink is needed because a Homebrew *formula* cannot write
+outside its own prefix — only casks install into `/Applications`.
+
+**After `brew upgrade`, re-toggle Launch at Login.** macOS records the login item
+against the exact versioned path (`.../Cellar/spotifymenubar/<version>/...`), so an
+upgrade leaves the old registration pointing at a directory that no longer exists.
+Right-click -> Launch at Login off, then on again.
+
+Upgrading also re-signs the bundle with a new code identity, so the one-time
+"control Spotify" prompt reappears. Expected, not a bug.
+
 ## Configuration
 
 Defaults live in the `Config` enum in
@@ -133,8 +158,9 @@ Remove an override with `defaults delete com.local.SpotifyMenuBar maxTrack`.
 - Relies on Spotify's AppleScript dictionary and the `PlaybackStateChanged`
   notification, which are **undocumented / Spotify-internal**. They've been stable
   for years but a future Spotify client could change them.
-- Built locally and **ad-hoc signed**, not notarized — fine for personal use, but
-  not distributable to other Macs without proper signing/notarization.
+- Built locally and **ad-hoc signed**, not notarized. Distributable via the
+  Homebrew tap, which compiles on the target machine and so sidesteps Gatekeeper;
+  a *prebuilt* download would need Developer ID signing and notarization.
 - The automatic layout measures free space and will not displace other icons, but a
   layout pinned via **Display** deliberately overrides that, so a pinned larger
   layout can still be hidden on a crowded bar — pick a smaller one, or **Auto**.
@@ -146,6 +172,7 @@ SpotifyMenuBar/
 ├── Package.swift                          # SwiftPM, macOS 13+, three targets
 ├── Info.plist                             # bundle metadata (LSUIElement, usage strings)
 ├── build-app.sh                           # assembles + ad-hoc signs SpotifyMenuBar.app
+├── LICENSE                                # MIT
 ├── README.md
 ├── AGENTS.md                              # instructions for AI coding agents
 ├── CLAUDE.md                              # → points to AGENTS.md

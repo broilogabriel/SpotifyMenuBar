@@ -301,9 +301,58 @@ same script read 12 -> 13 on a crowded bar and 8 -> 9 an hour later, both PASS.
   (`${APP}`).
 - For launch-at-login to be reliable the bundle should live in `/Applications`.
 
+## Homebrew distribution (`broilogabriel/homebrew-tap`)
+
+Installed with `brew install broilogabriel/tap/spotifymenubar`. The formula **builds
+from source**; it does not ship a binary. Four facts were established empirically on
+2026-08-20/21 and are expensive to rediscover:
+
+1. **`--disable-sandbox` on `swift build` is mandatory.** SwiftPM invokes
+   `sandbox-exec`, which cannot nest inside Homebrew's own build sandbox. Without the
+   flag the build dies with `sandbox-exec: sandbox_apply: Operation not permitted`
+   reported as `error: Invalid manifest` — a message that points nowhere near the
+   real cause.
+2. **Building from source is the whole point, not a shortcut.** A locally compiled
+   bundle never receives `com.apple.quarantine`, so Gatekeeper never evaluates it and
+   the ad-hoc signature suffices. Verified: the installed keg bundle carries only
+   `com.apple.provenance`, identical to a `build-app.sh` install. A *downloaded*
+   ad-hoc-signed build would be blocked on Apple Silicon. Note `spctl -a -t exec`
+   reports `rejected` for both — that is expected for ad-hoc and is not predictive of
+   launchability; quarantine is what gates it.
+3. **macOS pins the login item to the versioned Cellar path.** Registering via
+   `SMAppService` from the keg works (BTM records it `allowed`), but the recorded URL
+   is `.../Cellar/spotifymenubar/<version>/SpotifyMenuBar.app/` — not the
+   `/Applications` symlink and not the stable `opt` path, because LaunchServices
+   resolves the symlink before launching. So `brew upgrade` orphans the registration
+   and the user must re-toggle Launch at Login. Self-healing re-registration on
+   launch is deliberately deferred, not overlooked.
+4. **A formula cannot install into `/Applications`** — that is the cask `app`
+   stanza's privilege. Hence the `caveats` block asking the user to symlink.
+
+Homebrew's own tap is not a target: self-submission needs 90 forks / 90 watchers /
+225 stars, and from 2026-09-01 Homebrew drops all casks failing Gatekeeper checks.
+The personal tap is the sanctioned route for software outside those criteria.
+
+### Cutting a release
+
+Version lives **only** in `Info.plist` (both `CFBundleVersion` and
+`CFBundleShortVersionString`); there is no templating and nothing derives it from git.
+
+1. Bump both strings in `Info.plist`.
+2. Commit, then tag: `git tag v<version> && git push origin v<version>`.
+   The tag is load-bearing — Homebrew parses the version out of the tarball URL, and
+   a URL without one fails with `invalid attribute for formula: version (nil)`.
+3. `curl -sL https://github.com/broilogabriel/SpotifyMenuBar/archive/refs/tags/v<version>.tar.gz | shasum -a 256`
+4. Update `url` and `sha256` in the tap's `Formula/spotifymenubar.rb`, commit, push.
+5. Verify: `brew upgrade spotifymenubar` (or `brew install --build-from-source`).
+
 ## Things NOT yet done (reasonable future work)
 
 - Proper Developer ID signing + notarization (currently ad-hoc, personal use only).
+- Self-healing login item: re-register on launch when `SMAppService.mainApp.status`
+  is already `.enabled`, so the BTM path follows the new Cellar directory after a
+  `brew upgrade` instead of orphaning. Deferred by decision, see Homebrew section
+  point 3. Needs verifying that re-registration actually rewrites the recorded URL.
 - Apple Music support, album art, configurable hotkeys, a preferences UI.
 - Clip-detection / auto-demotion feedback loop — **abandoned as designed** (decision #16:
   watching our *own* window can never work, because we are the cause and not the clipped
