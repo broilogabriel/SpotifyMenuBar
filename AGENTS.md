@@ -352,11 +352,23 @@ byte-stable, and a git upgrade has silently changed them before, breaking pinned
 checksums across Homebrew, MacPorts and Spack simultaneously. An uploaded asset is
 immutable, so the pinned `sha256` cannot rot.
 
-**Cross-repo auth is a deploy key.** The default workflow token cannot push to
-`homebrew-tap`. `secrets.TAP_DEPLOY_KEY` holds an SSH private key whose public half is
-a write-enabled deploy key on the tap. Never expires; rotate by replacing both halves.
-A deploy key cannot be scoped to a path, so it grants write access to every formula in
-the tap — fine while all the source repos share one owner.
+**Cross-repo auth is a deploy key, provisioned from 1Password.** The default workflow
+token cannot push to `homebrew-tap`, so `secrets.TAP_DEPLOY_KEY` holds an SSH private
+key whose public half is a write-enabled deploy key on the tap.
+
+Run `./setup-tap-deploy-key.sh` (with `OP_VAULT` set) to provision or rotate it. The
+pair is generated *inside* 1Password via `op item create --ssh-generate-key`, and the
+private half travels to the GitHub secret over stdin inside `op run` — so it is never
+written to this disk and never appears in argv where `ps` could read it. There is no
+local key file to forget about deleting.
+
+Two properties of deploy keys worth knowing:
+
+- They cannot be scoped to a path, so this key grants write access to every formula in
+  the tap. Fine while all the source repos share one owner.
+- GitHub attributes a deploy key to the token that created it. De-authorizing that `gh`
+  token silently removes the key, and releases then fail with an SSH permission error.
+  Re-running the script restores it.
 
 **The bump retries with a rebase.** The tap is shared across projects, so another
 project's release can land between our clone and our push. Verified against a

@@ -172,6 +172,7 @@ SpotifyMenuBar/
 ├── Package.swift                          # SwiftPM, macOS 13+, three targets
 ├── Info.plist                             # bundle metadata (LSUIElement, usage strings)
 ├── build-app.sh                           # assembles + ad-hoc signs SpotifyMenuBar.app
+├── setup-tap-deploy-key.sh                # provisions the release deploy key from 1Password
 ├── LICENSE                                # MIT
 ├── README.md
 ├── AGENTS.md                              # instructions for AI coding agents
