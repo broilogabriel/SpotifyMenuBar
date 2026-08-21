@@ -72,21 +72,37 @@ jobs:
           ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
           export GIT_SSH_COMMAND="ssh -i ~/.ssh/tap_key -o IdentitiesOnly=yes"
 
-          git clone --depth 1 git@github.com:broilogabriel/homebrew-tap.git tap
+          git clone git@github.com:broilogabriel/homebrew-tap.git tap
           cd tap
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ASSET}"
           FORMULA=Formula/spotifymenubar.rb
-          sed -i '' -E "s|^  url \".*\"$|  url \"${URL}\"|"       "${FORMULA}"
-          sed -i '' -E "s|^  sha256 \".*\"$|  sha256 \"${SHA256}\"|" "${FORMULA}"
 
-          grep -E '^  (url|sha256) ' "${FORMULA}"
+          # Retry with a rebase: the tap is shared, so another project's release
+          # can land between our clone and our push. Rebasing is safe here because
+          # the edit only ever touches two lines of one formula -- a concurrent
+          # release touches a different file.
+          for attempt in 1 2 3; do
+            sed -i '' -E "s|^  url \".*\"$|  url \"${URL}\"|"          "${FORMULA}"
+            sed -i '' -E "s|^  sha256 \".*\"$|  sha256 \"${SHA256}\"|" "${FORMULA}"
+            grep -E '^  (url|sha256) ' "${FORMULA}"
 
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git diff --quiet; then
-            echo "formula already at ${VERSION} with this checksum -- nothing to push"
-            exit 0
-          fi
-          git commit -am "chore: spotifymenubar ${VERSION}"
-          git push
+            if git diff --quiet; then
+              echo "formula already at ${VERSION} with this checksum -- nothing to push"
+              exit 0
+            fi
+
+            git commit -am "chore: spotifymenubar ${VERSION}"
+            if git push; then
+              exit 0
+            fi
+
+            echo "push rejected (attempt ${attempt}) -- rebasing onto the tap's new head"
+            git reset --hard HEAD~1
+            git pull --rebase
+          done
+
+          echo "::error::could not push the formula bump after 3 attempts"
+          exit 1

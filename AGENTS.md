@@ -355,6 +355,14 @@ immutable, so the pinned `sha256` cannot rot.
 **Cross-repo auth is a deploy key.** The default workflow token cannot push to
 `homebrew-tap`. `secrets.TAP_DEPLOY_KEY` holds an SSH private key whose public half is
 a write-enabled deploy key on the tap. Never expires; rotate by replacing both halves.
+A deploy key cannot be scoped to a path, so it grants write access to every formula in
+the tap — fine while all the source repos share one owner.
+
+**The bump retries with a rebase.** The tap is shared across projects, so another
+project's release can land between our clone and our push. Verified against a
+simulated race: first push rejected, rebase, second push succeeds, and both changes
+survive. The tap's own `brew test-bot` workflow runs on pushes to `main` as well as on
+pull requests, precisely because this bump commits straight to `main`.
 
 ### CI
 
