@@ -335,16 +335,35 @@ The personal tap is the sanctioned route for software outside those criteria.
 
 ### Cutting a release
 
-Version lives **only** in `Info.plist` (both `CFBundleVersion` and
-`CFBundleShortVersionString`); there is no templating and nothing derives it from git.
+Automated by `.github/workflows/release.yml`, triggered by pushing a `v*` tag. Version
+lives **only** in `Info.plist` (both `CFBundleVersion` and `CFBundleShortVersionString`);
+nothing derives it from git.
 
-1. Bump both strings in `Info.plist`.
-2. Commit, then tag: `git tag v<version> && git push origin v<version>`.
-   The tag is load-bearing — Homebrew parses the version out of the tarball URL, and
-   a URL without one fails with `invalid attribute for formula: version (nil)`.
-3. `curl -sL https://github.com/broilogabriel/SpotifyMenuBar/archive/refs/tags/v<version>.tar.gz | shasum -a 256`
-4. Update `url` and `sha256` in the tap's `Formula/spotifymenubar.rb`, commit, push.
-5. Verify: `brew upgrade spotifymenubar` (or `brew install --build-from-source`).
+1. Bump both strings in `Info.plist`, commit, merge to `main`.
+2. `git tag v<version> && git push origin v<version>`
+
+The workflow then verifies the tag matches `Info.plist` (and fails loudly if not),
+builds, runs the unit checks, produces a source tarball, publishes it as a release
+asset, and pushes the `url` + `sha256` bump to the tap. Nothing else is manual.
+
+**The release asset is deliberate, not incidental.** The formula does *not* point at
+`/archive/refs/tags/`: GitHub does not guarantee auto-generated archives are
+byte-stable, and a git upgrade has silently changed them before, breaking pinned
+checksums across Homebrew, MacPorts and Spack simultaneously. An uploaded asset is
+immutable, so the pinned `sha256` cannot rot.
+
+**Cross-repo auth is a deploy key.** The default workflow token cannot push to
+`homebrew-tap`. `secrets.TAP_DEPLOY_KEY` holds an SSH private key whose public half is
+a write-enabled deploy key on the tap. Never expires; rotate by replacing both halves.
+
+### CI
+
+`.github/workflows/ci.yml` runs on pull requests and pushes to `main`: `swift build`,
+the unit checks, and `build-app.sh` (which catches packaging and ad-hoc-signing
+breakage without needing a signing identity).
+
+`verify-no-eviction.sh` is **not** in CI and cannot be — it counts real status windows
+on a real display. It remains a manual pre-PR gate, per its own section above.
 
 ## Things NOT yet done (reasonable future work)
 

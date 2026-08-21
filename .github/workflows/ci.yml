@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Build
+        run: swift build
+
+      # `swift test` cannot work here: the toolchain ships neither XCTest nor
+      # swift-testing, so the checks are a plain executable target.
+      - name: Unit checks
+        run: swift run SpotifyMenuBarCoreTests
+
+      # Catches packaging breakage (bundle assembly, ad-hoc signing) without
+      # needing a signing identity. Cannot catch the no-eviction guarantee --
+      # verify-no-eviction.sh needs a real menu bar on a real display and stays
+      # a manual pre-PR gate.
+      - name: Package app bundle
+        run: ./build-app.sh

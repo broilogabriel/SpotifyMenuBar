@@ -53,9 +53,10 @@ Established by installing a throwaway tap on a real machine, not from documentat
    the log — it does not resemble a sandbox problem.
 2. **A tap is mandatory.** Homebrew 6.0.18 refuses loose formula files outright:
    `Error: Homebrew requires formulae to be in a tap`.
-3. **The tag is load-bearing.** With a URL carrying no version, formula loading fails
-   with `invalid attribute for formula: version (nil)`. A GitHub tag tarball supplies
-   it; the repo previously had zero tags.
+3. **The URL must carry the version.** With one that does not, formula loading fails
+   at `invalid attribute for formula: version (nil)`. The repo previously had zero
+   tags. Verified that Homebrew parses `1.1.0` out of the release-asset filename
+   `SpotifyMenuBar-1.1.0.tar.gz`, so no explicit `version` stanza is needed.
 4. **The ad-hoc signature survives installation** — `flags=0x2(adhoc)`,
    `Identifier=com.local.SpotifyMenuBar`, `TeamIdentifier=not set`. `SMAppService` and
    TCC keep the stable identity they need.
@@ -87,6 +88,28 @@ Established by installing a throwaway tap on a real machine, not from documentat
 - **A LICENSE was required.** The formula's `license` stanza needs a real answer; MIT
   was chosen.
 
+## Release automation (added same day)
+
+Two workflows. `ci.yml` runs build, unit checks and `build-app.sh` on pull requests.
+`release.yml` triggers on a `v*` tag and does everything downstream of the tag:
+version/tag consistency check, build, tarball, release asset, and the tap's
+`url` + `sha256` bump.
+
+Two decisions inside it are load-bearing:
+
+- **The formula points at an uploaded release asset, not `/archive/refs/tags/`.**
+  GitHub states auto-generated archives are not guaranteed byte-stable, and a git
+  upgrade has changed them before, breaking pinned checksums across Homebrew,
+  MacPorts and Spack at once. Uploaded assets are immutable, so the pinned `sha256`
+  cannot rot out from under a release that never changed.
+- **Cross-repo push uses a deploy key**, not a PAT — scoped to the one repo and
+  without an expiry to forget about.
+
+Bumping `Info.plist` and creating the tag stay manual: that is the deliberate "release
+now" decision, and automating it would mean a workflow with write access to `main`.
+
 ## Out of scope
 
-Developer ID signing, notarization, CI, bottles, and submission to homebrew-cask.
+Developer ID signing, notarization, bottles, and submission to homebrew-cask.
+Automating the version bump and tag creation. Any CI coverage of the no-eviction
+guarantee, which is physically impossible on a headless runner.
