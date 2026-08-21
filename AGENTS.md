@@ -335,16 +335,35 @@ The personal tap is the sanctioned route for software outside those criteria.
 
 ### Cutting a release
 
-Automated by `.github/workflows/release.yml`, triggered by pushing a `v*` tag. Version
-lives **only** in `Info.plist` (both `CFBundleVersion` and `CFBundleShortVersionString`);
-nothing derives it from git.
+Automated by release-please. There is nothing to bump by hand.
 
-1. Bump both strings in `Info.plist`, commit, merge to `main`.
-2. `git tag v<version> && git push origin v<version>`
+1. Merge PRs to `main` with Conventional Commit titles (enforced, see below).
+2. release-please keeps a **Release PR** open, accumulating the next version and
+   `CHANGELOG.md` entries. `feat:` bumps minor, `fix:`/`chore:` bump patch, `!` or a
+   `BREAKING CHANGE:` footer bumps major.
+3. Merge the Release PR. That tags the release and publishes it.
+4. The same workflow run then builds, runs the unit checks, attaches the source
+   tarball, and pushes the `url` + `sha256` bump to the tap.
 
-The workflow then verifies the tag matches `Info.plist` (and fails loudly if not),
-builds, runs the unit checks, produces a source tarball, publishes it as a release
-asset, and pushes the `url` + `sha256` bump to the tap. Nothing else is manual.
+**The downstream steps live in `release.yml` alongside release-please, not in a
+separate tag-triggered workflow.** This is forced: release-please tags with the
+default `GITHUB_TOKEN`, and pushes made with that token do not trigger other workflow
+runs, so a `push: tags` workflow would never fire. Everything is gated on
+`steps.release.outputs.release_created == 'true'` — the explicit string comparison
+matters, since the output is the string `"false"` when nothing was released.
+
+**The version reaches `Info.plist` through an annotation.** Both `<string>` lines carry
+`<!-- x-release-please-version -->`, and release-please's generic updater replaces the
+semver on any line bearing that marker (it matches the marker anywhere on the line and
+needs no particular comment syntax, so a plist works). `release-please-config.json`
+declares `Info.plist` as an `extra-files` entry with `"type": "generic"`.
+
+If that annotation ever stops matching, the tag advances while the plist does not.
+`release.yml` asserts the two agree before building, precisely so that failure is loud
+instead of shipping a mislabelled bundle. Keep that check.
+
+The `simple` release type also maintains a root `version.txt`. It is release-please's
+bookkeeping; the app never reads it. `Info.plist` remains what the build consumes.
 
 **The release asset is deliberate, not incidental.** The formula does *not* point at
 `/archive/refs/tags/`: GitHub does not guarantee auto-generated archives are
@@ -352,15 +371,20 @@ byte-stable, and a git upgrade has silently changed them before, breaking pinned
 checksums across Homebrew, MacPorts and Spack simultaneously. An uploaded asset is
 immutable, so the pinned `sha256` cannot rot.
 
-**Cross-repo auth is a deploy key, provisioned from 1Password.** The default workflow
-token cannot push to `homebrew-tap`, so `secrets.TAP_DEPLOY_KEY` holds an SSH private
-key whose public half is a write-enabled deploy key on the tap.
+### Auth, and the tap bump
+
+**One deploy key, provisioned from 1Password.** The default workflow token cannot push
+to `homebrew-tap`, so `secrets.TAP_DEPLOY_KEY` holds an SSH private key whose public
+half is a write-enabled deploy key on the tap. It is the only key needed: release-please
+tags within this repo using the built-in token, and the steps that consume the tag run
+in the same workflow, so nothing has to push in a way that must trigger another run.
 
 Run `./setup-tap-deploy-key.sh` (with `OP_VAULT` set) to provision or rotate it. The
-pair is generated *inside* 1Password via `op item create --ssh-generate-key`, and the
-private half travels to the GitHub secret over stdin inside `op run` — so it is never
-written to this disk and never appears in argv where `ps` could read it. There is no
-local key file to forget about deleting.
+pair is generated *inside* 1Password via `op item create --ssh-generate-key=ed25519`,
+and the private half travels to the GitHub secret over stdin inside `op run` — so it is
+never written to disk and never appears in argv where `ps` could read it. The
+`?ssh-format=openssh` suffix on the reference is required, not cosmetic: the plain
+reference returns PKCS#8, which `ssh` cannot use.
 
 Two properties of deploy keys worth knowing:
 
@@ -371,10 +395,24 @@ Two properties of deploy keys worth knowing:
   Re-running the script restores it.
 
 **The bump retries with a rebase.** The tap is shared across projects, so another
-project's release can land between our clone and our push. Verified against a
-simulated race: first push rejected, rebase, second push succeeds, and both changes
-survive. The tap's own `brew test-bot` workflow runs on pushes to `main` as well as on
-pull requests, precisely because this bump commits straight to `main`.
+project's release can land between our clone and our push. Verified against a simulated
+race: first push rejected, rebase, second push succeeds, and both changes survive. The
+tap's own `brew test-bot` workflow runs on pushes to `main` as well as on pull requests,
+precisely because this bump commits straight to `main`.
+
+### Conventional Commits are enforced, not encouraged
+
+release-please derives versions from commit subjects on `main`, so a malformed subject
+silently contributes no bump. Two mechanisms keep that from happening:
+
+- The repo is set to `squash_merge_commit_title=PR_TITLE`, so a squash subject is
+  always the PR title rather than sometimes a branch name.
+- `.github/workflows/pr-title.yml` fails the PR if that title is not a Conventional
+  Commit subject.
+
+This was a real failure, not a hypothetical: `feat/homebrew distribution (#3)` reached
+`main` because `gh pr create --fill` used the branch name as the title while the repo
+was still on `COMMIT_OR_PR_TITLE`.
 
 ### CI
 
