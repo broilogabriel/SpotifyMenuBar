@@ -1,0 +1,108 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version and check it matches Info.plist
+        id: version
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          PLIST_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Info.plist)"
+          if [ "${VERSION}" != "${PLIST_VERSION}" ]; then
+            echo "::error::tag ${TAG} implies version ${VERSION}, but Info.plist says ${PLIST_VERSION}"
+            exit 1
+          fi
+          echo "tag=${TAG}"          >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}"  >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: swift build -c release
+
+      - name: Unit checks
+        run: swift run SpotifyMenuBarCoreTests
+
+      # Our own tarball, not GitHub's /archive/refs/tags/ one. GitHub does not
+      # guarantee auto-generated archives are byte-stable -- a git upgrade has
+      # silently changed them before and broken pinned checksums everywhere. An
+      # uploaded release asset is immutable, so the formula's sha256 stays valid.
+      - name: Build source tarball
+        id: tarball
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          NAME="SpotifyMenuBar-${VERSION}.tar.gz"
+          git archive --format=tar.gz --prefix="SpotifyMenuBar-${VERSION}/" -o "${NAME}" HEAD
+          echo "name=${NAME}" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(shasum -a 256 "${NAME}" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            "${{ steps.tarball.outputs.name }}" \
+            --title "${{ steps.version.outputs.tag }}" \
+            --generate-notes
+
+      - name: Bump formula in homebrew-tap
+        env:
+          DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ASSET: ${{ steps.tarball.outputs.name }}
+          SHA256: ${{ steps.tarball.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p ~/.ssh
+          printf '%s\n' "${DEPLOY_KEY}" > ~/.ssh/tap_key
+          chmod 600 ~/.ssh/tap_key
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/tap_key -o IdentitiesOnly=yes"
+
+          git clone git@github.com:broilogabriel/homebrew-tap.git tap
+          cd tap
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ASSET}"
+          FORMULA=Formula/spotifymenubar.rb
+
+          # Retry with a rebase: the tap is shared, so another project's release
+          # can land between our clone and our push. Rebasing is safe here because
+          # the edit only ever touches two lines of one formula -- a concurrent
+          # release touches a different file.
+          for attempt in 1 2 3; do
+            sed -i '' -E "s|^  url \".*\"$|  url \"${URL}\"|"          "${FORMULA}"
+            sed -i '' -E "s|^  sha256 \".*\"$|  sha256 \"${SHA256}\"|" "${FORMULA}"
+            grep -E '^  (url|sha256) ' "${FORMULA}"
+
+            if git diff --quiet; then
+              echo "formula already at ${VERSION} with this checksum -- nothing to push"
+              exit 0
+            fi
+
+            git commit -am "chore: spotifymenubar ${VERSION}"
+            if git push; then
+              exit 0
+            fi
+
+            echo "push rejected (attempt ${attempt}) -- rebasing onto the tap's new head"
+            git reset --hard HEAD~1
+            git pull --rebase
+          done
+
+          echo "::error::could not push the formula bump after 3 attempts"
+          exit 1

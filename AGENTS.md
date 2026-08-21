@@ -301,9 +301,97 @@ same script read 12 -> 13 on a crowded bar and 8 -> 9 an hour later, both PASS.
   (`${APP}`).
 - For launch-at-login to be reliable the bundle should live in `/Applications`.
 
+## Homebrew distribution (`broilogabriel/homebrew-tap`)
+
+Installed with `brew install broilogabriel/tap/spotifymenubar`. The formula **builds
+from source**; it does not ship a binary. Four facts were established empirically on
+2026-08-20/21 and are expensive to rediscover:
+
+1. **`--disable-sandbox` on `swift build` is mandatory.** SwiftPM invokes
+   `sandbox-exec`, which cannot nest inside Homebrew's own build sandbox. Without the
+   flag the build dies with `sandbox-exec: sandbox_apply: Operation not permitted`
+   reported as `error: Invalid manifest` — a message that points nowhere near the
+   real cause.
+2. **Building from source is the whole point, not a shortcut.** A locally compiled
+   bundle never receives `com.apple.quarantine`, so Gatekeeper never evaluates it and
+   the ad-hoc signature suffices. Verified: the installed keg bundle carries only
+   `com.apple.provenance`, identical to a `build-app.sh` install. A *downloaded*
+   ad-hoc-signed build would be blocked on Apple Silicon. Note `spctl -a -t exec`
+   reports `rejected` for both — that is expected for ad-hoc and is not predictive of
+   launchability; quarantine is what gates it.
+3. **macOS pins the login item to the versioned Cellar path.** Registering via
+   `SMAppService` from the keg works (BTM records it `allowed`), but the recorded URL
+   is `.../Cellar/spotifymenubar/<version>/SpotifyMenuBar.app/` — not the
+   `/Applications` symlink and not the stable `opt` path, because LaunchServices
+   resolves the symlink before launching. So `brew upgrade` orphans the registration
+   and the user must re-toggle Launch at Login. Self-healing re-registration on
+   launch is deliberately deferred, not overlooked.
+4. **A formula cannot install into `/Applications`** — that is the cask `app`
+   stanza's privilege. Hence the `caveats` block asking the user to symlink.
+
+Homebrew's own tap is not a target: self-submission needs 90 forks / 90 watchers /
+225 stars, and from 2026-09-01 Homebrew drops all casks failing Gatekeeper checks.
+The personal tap is the sanctioned route for software outside those criteria.
+
+### Cutting a release
+
+Automated by `.github/workflows/release.yml`, triggered by pushing a `v*` tag. Version
+lives **only** in `Info.plist` (both `CFBundleVersion` and `CFBundleShortVersionString`);
+nothing derives it from git.
+
+1. Bump both strings in `Info.plist`, commit, merge to `main`.
+2. `git tag v<version> && git push origin v<version>`
+
+The workflow then verifies the tag matches `Info.plist` (and fails loudly if not),
+builds, runs the unit checks, produces a source tarball, publishes it as a release
+asset, and pushes the `url` + `sha256` bump to the tap. Nothing else is manual.
+
+**The release asset is deliberate, not incidental.** The formula does *not* point at
+`/archive/refs/tags/`: GitHub does not guarantee auto-generated archives are
+byte-stable, and a git upgrade has silently changed them before, breaking pinned
+checksums across Homebrew, MacPorts and Spack simultaneously. An uploaded asset is
+immutable, so the pinned `sha256` cannot rot.
+
+**Cross-repo auth is a deploy key, provisioned from 1Password.** The default workflow
+token cannot push to `homebrew-tap`, so `secrets.TAP_DEPLOY_KEY` holds an SSH private
+key whose public half is a write-enabled deploy key on the tap.
+
+Run `./setup-tap-deploy-key.sh` (with `OP_VAULT` set) to provision or rotate it. The
+pair is generated *inside* 1Password via `op item create --ssh-generate-key`, and the
+private half travels to the GitHub secret over stdin inside `op run` — so it is never
+written to this disk and never appears in argv where `ps` could read it. There is no
+local key file to forget about deleting.
+
+Two properties of deploy keys worth knowing:
+
+- They cannot be scoped to a path, so this key grants write access to every formula in
+  the tap. Fine while all the source repos share one owner.
+- GitHub attributes a deploy key to the token that created it. De-authorizing that `gh`
+  token silently removes the key, and releases then fail with an SSH permission error.
+  Re-running the script restores it.
+
+**The bump retries with a rebase.** The tap is shared across projects, so another
+project's release can land between our clone and our push. Verified against a
+simulated race: first push rejected, rebase, second push succeeds, and both changes
+survive. The tap's own `brew test-bot` workflow runs on pushes to `main` as well as on
+pull requests, precisely because this bump commits straight to `main`.
+
+### CI
+
+`.github/workflows/ci.yml` runs on pull requests and pushes to `main`: `swift build`,
+the unit checks, and `build-app.sh` (which catches packaging and ad-hoc-signing
+breakage without needing a signing identity).
+
+`verify-no-eviction.sh` is **not** in CI and cannot be — it counts real status windows
+on a real display. It remains a manual pre-PR gate, per its own section above.
+
 ## Things NOT yet done (reasonable future work)
 
 - Proper Developer ID signing + notarization (currently ad-hoc, personal use only).
+- Self-healing login item: re-register on launch when `SMAppService.mainApp.status`
+  is already `.enabled`, so the BTM path follows the new Cellar directory after a
+  `brew upgrade` instead of orphaning. Deferred by decision, see Homebrew section
+  point 3. Needs verifying that re-registration actually rewrites the recorded URL.
 - Apple Music support, album art, configurable hotkeys, a preferences UI.
 - Clip-detection / auto-demotion feedback loop — **abandoned as designed** (decision #16:
   watching our *own* window can never work, because we are the cause and not the clipped
