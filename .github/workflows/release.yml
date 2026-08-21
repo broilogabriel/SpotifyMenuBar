@@ -1,36 +1,57 @@
 name: Release
 
+# release-please keeps a rolling Release PR open, deriving the next version from
+# Conventional Commit subjects on main. Merging that PR tags the release; the steps
+# below then publish the asset and bump the tap.
+#
+# Those steps live in THIS workflow rather than a separate tag-triggered one because
+# release-please tags using the default GITHUB_TOKEN, and pushes made with that token
+# do not trigger other workflow runs. A `push: tags` workflow would never fire.
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   release:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
 
-      - name: Resolve version and check it matches Info.plist
-        id: version
+      # Everything below runs only on the push that merged a Release PR.
+      # The `== 'true'` is deliberate: the output is the *string* "false" when no
+      # release happened, and a bare non-empty string is not reliably falsy here.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        with:
+          # Build from the commit that was actually tagged, not whatever main has
+          # drifted to since.
+          ref: ${{ steps.release.outputs.tag_name }}
+
+      - name: Check Info.plist matches the release
+        if: ${{ steps.release.outputs.release_created == 'true' }}
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
-          VERSION="${TAG#v}"
+          VERSION="${{ steps.release.outputs.version }}"
           PLIST_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Info.plist)"
           if [ "${VERSION}" != "${PLIST_VERSION}" ]; then
-            echo "::error::tag ${TAG} implies version ${VERSION}, but Info.plist says ${PLIST_VERSION}"
+            echo "::error::released ${VERSION} but Info.plist says ${PLIST_VERSION} -- the x-release-please-version annotation is probably not matching"
             exit 1
           fi
-          echo "tag=${TAG}"          >> "$GITHUB_OUTPUT"
-          echo "version=${VERSION}"  >> "$GITHUB_OUTPUT"
 
       - name: Build
+        if: ${{ steps.release.outputs.release_created == 'true' }}
         run: swift build -c release
 
       - name: Unit checks
+        if: ${{ steps.release.outputs.release_created == 'true' }}
         run: swift run SpotifyMenuBarCoreTests
 
       # Our own tarball, not GitHub's /archive/refs/tags/ one. GitHub does not
@@ -39,28 +60,30 @@ jobs:
       # uploaded release asset is immutable, so the formula's sha256 stays valid.
       - name: Build source tarball
         id: tarball
+        if: ${{ steps.release.outputs.release_created == 'true' }}
         run: |
           set -euo pipefail
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${{ steps.release.outputs.version }}"
           NAME="SpotifyMenuBar-${VERSION}.tar.gz"
           git archive --format=tar.gz --prefix="SpotifyMenuBar-${VERSION}/" -o "${NAME}" HEAD
           echo "name=${NAME}" >> "$GITHUB_OUTPUT"
           echo "sha256=$(shasum -a 256 "${NAME}" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
-      - name: Publish release
+      # upload, not create: release-please already made the release.
+      - name: Attach the tarball to the release
+        if: ${{ steps.release.outputs.release_created == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ steps.version.outputs.tag }}" \
-            "${{ steps.tarball.outputs.name }}" \
-            --title "${{ steps.version.outputs.tag }}" \
-            --generate-notes
+          gh release upload "${{ steps.release.outputs.tag_name }}" \
+            "${{ steps.tarball.outputs.name }}" --clobber
 
       - name: Bump formula in homebrew-tap
+        if: ${{ steps.release.outputs.release_created == 'true' }}
         env:
           DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
-          TAG: ${{ steps.version.outputs.tag }}
-          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+          VERSION: ${{ steps.release.outputs.version }}
           ASSET: ${{ steps.tarball.outputs.name }}
           SHA256: ${{ steps.tarball.outputs.sha256 }}
         run: |
@@ -81,8 +104,8 @@ jobs:
           FORMULA=Formula/spotifymenubar.rb
 
           # Retry with a rebase: the tap is shared, so another project's release
-          # can land between our clone and our push. Rebasing is safe here because
-          # the edit only ever touches two lines of one formula -- a concurrent
+          # can land between our clone and our push. Rebasing is safe because the
+          # edit only ever touches two lines of one formula -- a concurrent
           # release touches a different file.
           for attempt in 1 2 3; do
             sed -i '' -E "s|^  url \".*\"$|  url \"${URL}\"|"          "${FORMULA}"

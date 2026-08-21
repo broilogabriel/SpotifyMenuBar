@@ -1,0 +1,44 @@
+name: PR title
+
+# The squash-merge subject becomes a commit on main, and release-please derives the
+# next version from those subjects. A non-conventional subject therefore silently
+# contributes no version bump, which is exactly what happened with
+# "feat/homebrew distribution (#3)" -- `gh pr create --fill` had used the branch
+# name as the title.
+#
+# The repo is set to squash_merge_commit_title=PR_TITLE, so validating the title
+# here is sufficient to keep main's history parseable.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  conventional:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Title must be a Conventional Commit subject
+        # Via env, never interpolated into the script body: a PR title is
+        # attacker-controlled text, and `${{ }}` inside `run:` is substituted
+        # before the shell sees it, which is a script-injection hole.
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          TYPES='feat|fix|chore|refactor|docs|test|build|ci|perf|style|revert'
+          if [[ ! "${TITLE}" =~ ^(${TYPES})(\([a-z0-9._/-]+\))?!?:\ .+ ]]; then
+            {
+              echo "::error::PR title is not a Conventional Commit subject: ${TITLE}"
+              echo ""
+              echo "Expected <type>[(scope)][!]: <description>, for example:"
+              echo "  feat: adapt the menu-bar item to available space"
+              echo "  fix(layout): stop the notch eating the trailing anchor"
+              echo "  feat!: drop macOS 13 support"
+              echo ""
+              echo "Allowed types: ${TYPES//|/, }"
+            } >&2
+            exit 1
+          fi
+          echo "OK: ${TITLE}"
