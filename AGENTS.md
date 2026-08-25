@@ -352,6 +352,27 @@ runs, so a `push: tags` workflow would never fire. Everything is gated on
 `steps.release.outputs.release_created == 'true'` — the explicit string comparison
 matters, since the output is the string `"false"` when nothing was released.
 
+**Two repo settings are load-bearing.** Neither lives in any file, so a fresh clone or
+a fork will fail confusingly without them:
+
+- `can_approve_pull_request_reviews` must be **true** (Settings > Actions > General >
+  "Allow GitHub Actions to create and approve pull requests"). It is off by default, and
+  without it release-please gets as far as creating its branch and commit, then dies on
+  `GitHub Actions is not permitted to create or approve pull requests`. This broke the
+  very first release run.
+- `squash_merge_commit_title` must be **PR_TITLE**, per the Conventional Commits section
+  below.
+
+Read them back with:
+
+```bash
+gh api repos/broilogabriel/SpotifyMenuBar/actions/permissions/workflow
+gh api repos/broilogabriel/SpotifyMenuBar --jq .squash_merge_commit_title
+```
+
+`default_workflow_permissions` stays **read**: every workflow declares its own
+`permissions:` block, so the repo-wide default has no reason to be write.
+
 **The version reaches `Info.plist` through an annotation.** Both `<string>` lines carry
 `<!-- x-release-please-version -->`, and release-please's generic updater replaces the
 semver on any line bearing that marker (it matches the marker anywhere on the line and
