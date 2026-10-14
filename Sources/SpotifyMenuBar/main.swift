@@ -143,6 +143,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         loginItem.target = self
         menu.addItem(loginItem)
         menu.addItem(.separator())
+        // Which build this is, from the stamps build-app.sh writes (decision #22). Disabled
+        // so it reads as information; the tooltip says where the numbers come from.
+        let buildItem = NSMenuItem(title: Self.buildLine, action: nil, keyEquivalent: "")
+        buildItem.isEnabled = false
+        buildItem.toolTip = "Version, commit, the SDK this binary records, and build channel"
+        menu.addItem(buildItem)
         let quit = NSMenuItem(title: "Quit Spotify Menu Bar",
                               action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quit.target = NSApp
@@ -188,9 +194,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self, selector: #selector(barContentsMaybeChanged), name: name, object: nil)
         }
 
+        if UserDefaults.standard.bool(forKey: "debugLayout") {
+            Self.layoutLog.notice("[build] \(Self.buildLine, privacy: .public)")
+        }
         refresh()
         remeasureCeiling()
     }
+
+    static let buildLine: String = {
+        let info = Bundle.main.infoDictionary
+        return BuildInfo.describe(version: info?["CFBundleShortVersionString"] as? String,
+                                  commit: info?["SMBBuildCommit"] as? String,
+                                  sdk: info?["SMBBuildSDK"] as? String,
+                                  channel: info?["SMBBuildChannel"] as? String)
+    }()
 
     func control(_ symbol: String, _ label: String, _ action: Selector) -> NSButton {
         let b = NSButton()
