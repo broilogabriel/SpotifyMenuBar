@@ -19,6 +19,10 @@ swift run        # launches the menu-bar app in the FOREGROUND (blocks the termi
 ./build-app.sh   # assembles + ad-hoc signs SpotifyMenuBar.app (release build)
 ```
 
+- **`build-app.sh` is the only build recipe** — CI, the release workflow and the Homebrew
+  formula all run it. Don't add a second `swift build -c release` + `codesign` sequence
+  anywhere; see decision #22.
+
 - **Always `swift build` after editing** to confirm it compiles.
 - **Do NOT run `swift run` from an automated/non-interactive context** — it is a
   GUI app that runs until killed and will block. Let the human run it.
@@ -208,6 +212,26 @@ will likely reintroduce the bug noted.
     `debugLayout`, which logs a `[click]` line per action. Same macOS 27 change, still
     open: `_updateReplicants` redraws the item continuously (~50% CPU), and
     `CGWindowList` lists no status-item windows, so decision #19's ceiling is always nil.
+
+22. **Every shipped binary is built by `build-app.sh`, which stamps the installed SDK and
+    refuses a binary that records anything else.** Measured 2026-10-14 on macOS 27.0.1 with
+    the Command Line Tools 27 (Swift 6.4): SwiftPM's default build system (`swiftbuild`)
+    compiles against `MacOSX27.0.sdk` but records **`sdk 13.0`** — the deployment target —
+    in `LC_BUILD_VERSION` (`vtool -show-build`). `--build-system native`, a plain `swiftc`,
+    and `clang` all record 27.0 from the same inputs; why `swiftbuild` differs was not
+    found. AppKit keys behaviour off that stamp: the same source ran at **~90% CPU stamped
+    13.0 and ~55% stamped 26.5** (60s each, same display mode, three runs). Homebrew 1.2.0,
+    compiled on Aug 24 with the 26.5 tools, was fine; every local build after the macOS 27
+    upgrade was not, and nothing on screen said so.
+    The fix is in `build-app.sh`: `-Xlinker -platform_version -Xlinker macos -Xlinker
+    <LSMinimumSystemVersion> -Xlinker "$(xcrun --show-sdk-version)"`, then a `vtool` check
+    that exits non-zero on a mismatch. CI runs the script, so a runner toolchain change
+    fails a PR instead of shipping. **Never remove the pin or the check, and never build a
+    release any other way** — the formula calls the script for exactly this reason.
+    The script also stamps `SMBBuildCommit`, `SMBBuildSDK` and `SMBBuildChannel` into the
+    bundle's Info.plist; `BuildInfo.describe` renders them as the disabled line above
+    **Quit**, and `debugLayout` logs it as `[build]` at launch. That line is the first
+    thing to check when behaviour differs between machines or builds.
 
 ## Spotify integration facts
 
