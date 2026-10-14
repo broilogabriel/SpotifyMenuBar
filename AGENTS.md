@@ -49,10 +49,14 @@ will likely reintroduce the bug noted.
 4. **Smart previous** (`prev()`): if `player position > PREV_RESTART_SECS`, restart
    the track; otherwise go to the previous track. Spotify's plain `previous track`
    restarts mid-song, so without this there is no way to reach the previous track.
-5. **Right-click menu via `NSView.menu`, not a gesture recognizer.** Assigning
-   `.menu` on the status button and each subview is what reliably shows the Quit
-   menu. `NSClickGestureRecognizer` with a secondary-button mask did **not** fire on
-   the status-bar button — don't reintroduce it.
+5. **Right-click menu via the host's action, popped at the cursor — not `NSView.menu`,
+   not a gesture recognizer.** `NSClickGestureRecognizer` with a secondary-button mask
+   did **not** fire on the status-bar button — don't reintroduce it. `.menu` on the
+   button and each subview was the fix for that and worked until macOS 27, where it
+   opens the menu at the real status window, which sits on the *focused* display rather
+   than the one clicked (2026-10-14, three displays). The host now sends its action on
+   `.rightMouseDown` too and `hostClicked` calls `popUp(positioning:at:in: nil)` at
+   `NSEvent.mouseLocation`. See decision #21 for the event rules.
 6. **`statusItem.length` is recomputed in `resize(to:)`** (called from `apply()`) from
    the stack's `fittingSize` because the item uses a custom view (variable-length
    sizing won't track custom subviews automatically).
@@ -184,8 +188,14 @@ will likely reintroduce the bug noted.
       leave no dead sliver, and the outermost run to the window edges.
     - **Vertical bounds have 2pt slack.** The built-in item window ends exactly at the
       screen top (maxY 1117), and `CGRect.contains` would reject a top-pixel click.
-    - **Control-click returns early** — it is the menu gesture; acting too would skip a
-      track as the menu closes.
+    - **Right-click arrives as a remote "secondary action"** (`perform secondary action
+      type=1`), yielding exactly ONE host action: `rightMouseDown` normally, but
+      `rightMouseUp` when that same right-click closed a menu that was still open. **Both
+      pop the menu**, as does Control-click; measured 2026-10-14, handling only
+      `rightMouseDown` made reaching the menu from an open one take two right-clicks.
+    - **Only a non-mouse event falls back to play/pause.** Any other mouse event does
+      nothing: an earlier gate (`!= .leftMouseUp` → play/pause) made every second
+      right-click pause playback.
     Accepted, not handled: the cursor is read when the action arrives, not at mouse-up; and
     a click landing during `remeasureCeiling()`'s shrink acts on what is shown then (the
     lone play button sits where next was, because of the trailing anchor). Where real

@@ -44,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var prevButton: NSButton!
     var nextButton: NSButton!
     var loginItem: NSMenuItem!
+    var contextMenu: NSMenu!
     private var pendingRefresh: DispatchWorkItem?
     // Remembered so a momentarily screen-less window (early launch, display sleep)
     // reuses the last good geometry instead of collapsing to the floor.
@@ -112,15 +113,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             stack.centerYAnchor.constraint(equalTo: host.centerYAnchor),
         ])
 
-        // Right/control-click → Quit. Assigning an NSView `.menu` is the reliable
-        // way to get a contextual menu on a status item (gesture recognizers on the
-        // status button don't fire for the secondary button). Set it on every
-        // interactive subview so a right-click anywhere on the item works.
+        // Right/control-click → this menu, popped at the cursor by `hostClicked` (decision
+        // #5). Gesture recognizers on the status button don't fire for the secondary button.
         let menu = NSMenu()
         menu.delegate = self   // menuNeedsUpdate refreshes the login-item checkmark
-        // Always present, at every rung: on macOS 27 the menu is the one control surface
-        // that is guaranteed to work, because the right-click reaches `.menu` while left
-        // clicks only reach the host as a centred action (decision #21).
+        // Always present, at every rung: the menu needs no click geometry at all, so it is
+        // the fallback that works even if the cursor routing of decision #21 ever fails.
         for (title, action) in [("Previous", #selector(prev)),
                                 ("Play/Pause", #selector(playPause)),
                                 ("Next", #selector(next))] {
@@ -148,13 +146,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                               action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quit.target = NSApp
         menu.addItem(quit)
-        for v in [host, label, prevButton, playButton, nextButton] as [NSView] { v.menu = menu }
+        // Popped by `hostClicked` at the cursor, NOT assigned as `NSView.menu`: on macOS 27
+        // a right-click arrives as a remote "secondary action" and `.menu` opened at the
+        // real status window, which sits on the focused display rather than the one
+        // clicked. AGENTS.md decisions #5 and #21.
+        contextMenu = menu
         // Not dead code. On macOS 27 a left click never reaches prev/play/next: the menu
         // bar delivers it to the host as one action, and `hostClicked` recovers the target
         // from the cursor. Where real clicks still reach the buttons, they consume them and
         // this only fires for the label and the gaps. AGENTS.md decision #21.
         host.target = self
         host.action = #selector(hostClicked)
+        host.sendAction(on: [.leftMouseUp, .rightMouseDown])
         host.setAccessibilityHelp("Play or pause")
 
         DistributedNotificationCenter.default().addObserver(
@@ -215,16 +218,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// The host button's action. See decision #21 for why it exists and what was measured.
     @objc func hostClicked() {
         let event = NSApp.currentEvent
-        // Not a pointer click (VoiceOver press, keyboard menu-bar navigation, no event):
-        // play/pause is the one control present at every rung.
-        guard let event, event.type == .leftMouseUp else {
+        // Right-click, or Control-click (the same gesture on a one-button mouse): the menu,
+        // at the cursor's screen rather than the status window's. A right-click made while
+        // a menu is still open arrives as rightMouseUp instead (it is the click that closed
+        // that menu), and each secondary action yields exactly one of the two -- so both
+        // open the menu, or reaching it from an open menu takes two right-clicks.
+        if let event, event.type == .rightMouseDown || event.type == .rightMouseUp
+            || (event.type == .leftMouseUp && event.modifierFlags.contains(.control)) {
+            showContextMenu()
+            return
+        }
+        // Not a pointer event at all (VoiceOver press, keyboard menu-bar navigation, no
+        // event): play/pause is the one control present at every rung. Any OTHER mouse
+        // event must do nothing: treating them as non-pointer once made a right-click pause
+        // playback.
+        let mouseTypes: Set<NSEvent.EventType> = [.leftMouseDown, .leftMouseUp, .rightMouseDown,
+                                                  .rightMouseUp, .otherMouseDown, .otherMouseUp]
+        guard let event, mouseTypes.contains(event.type) else {
             logClick(.play, cursor: NSEvent.mouseLocation, window: statusItem.button?.window?.frame ?? .zero)
             playPause()
             return
         }
-        // Control-click is a menu gesture (see `.menu` above); acting as well would skip a
-        // track as the menu closes.
-        guard !event.modifierFlags.contains(.control) else { return }
+        guard event.type == .leftMouseUp else {
+            logClick(.none, cursor: NSEvent.mouseLocation, window: statusItem.button?.window?.frame ?? .zero)
+            return
+        }
         guard let host = statusItem.button, let window = host.window else { return }
 
         // The event's own location is the window's centre on macOS 27, whatever was
@@ -250,6 +268,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .label: bringSpotifyForward()
         case .none:  break   // a guess here would fire the wrong control
         }
+    }
+
+    /// `nil` view means screen coordinates, so the menu opens where the pointer is, on
+    /// whichever display was clicked.
+    func showContextMenu() {
+        let cursor = NSEvent.mouseLocation
+        if UserDefaults.standard.bool(forKey: "debugLayout") {
+            let w = statusItem.button?.window?.frame ?? .zero
+            Self.layoutLog.notice("[menu] cursor=\(NSStringFromPoint(cursor), privacy: .public) windowFrame=\(NSStringFromRect(w), privacy: .public)")
+        }
+        contextMenu.popUp(positioning: nil, at: cursor, in: nil)
     }
 
     /// Activates Spotify if it is running. Never launches it: launching is play/pause's
@@ -473,8 +502,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// Show exactly what this rung calls for. Hidden views leave the stack's layout,
-    /// so no view is ever added or removed — the `.menu` wiring from decision #5 and
-    /// the trailing anchor from #2 both survive untouched.
+    /// so no view is ever added or removed — the trailing anchor from #2 survives
+    /// untouched.
     func apply(_ r: BarLayout.Resolution, fullTitle: String?) {
         label.isHidden = !r.rung.showsLabel
         prevButton.isHidden = !r.rung.showsPrevNext
