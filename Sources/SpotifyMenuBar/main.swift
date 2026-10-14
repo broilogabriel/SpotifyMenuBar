@@ -44,9 +44,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var prevButton: NSButton!
     var nextButton: NSButton!
     var loginItem: NSMenuItem!
-    var menuPrevItem: NSMenuItem!
-    var menuNextItem: NSMenuItem!
-    var menuPrevNextSeparator: NSMenuItem!
     private var pendingRefresh: DispatchWorkItem?
     // Remembered so a momentarily screen-less window (early launch, display sleep)
     // reuses the last good geometry instead of collapsing to the floor.
@@ -121,17 +118,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // interactive subview so a right-click anywhere on the item works.
         let menu = NSMenu()
         menu.delegate = self   // menuNeedsUpdate refreshes the login-item checkmark
-        menuPrevItem = NSMenuItem(title: "Previous", action: #selector(prev), keyEquivalent: "")
-        menuPrevItem.target = self
-        menuPrevItem.isHidden = true
-        menu.addItem(menuPrevItem)
-        menuNextItem = NSMenuItem(title: "Next", action: #selector(next), keyEquivalent: "")
-        menuNextItem.target = self
-        menuNextItem.isHidden = true
-        menu.addItem(menuNextItem)
-        menuPrevNextSeparator = .separator()
-        menuPrevNextSeparator.isHidden = true
-        menu.addItem(menuPrevNextSeparator)
+        // Always present, at every rung: on macOS 27 the menu is the one control surface
+        // that is guaranteed to work, because the right-click reaches `.menu` while left
+        // clicks only reach the host as a centred action (decision #21).
+        for (title, action) in [("Previous", #selector(prev)),
+                                ("Play/Pause", #selector(playPause)),
+                                ("Next", #selector(next))] {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
         let displayItem = NSMenuItem(title: "Display", action: nil, keyEquivalent: "")
         let displayMenu = NSMenu()
         for mode in DisplayMode.allCases {
@@ -152,6 +149,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         quit.target = NSApp
         menu.addItem(quit)
         for v in [host, label, prevButton, playButton, nextButton] as [NSView] { v.menu = menu }
+        // Not dead code. On macOS 27 a left click never reaches prev/play/next: the menu
+        // bar delivers it to the host as one action, and `hostClicked` recovers the target
+        // from the cursor. Where real clicks still reach the buttons, they consume them and
+        // this only fires for the label and the gaps. AGENTS.md decision #21.
+        host.target = self
+        host.action = #selector(hostClicked)
+        host.setAccessibilityHelp("Play or pause")
 
         DistributedNotificationCenter.default().addObserver(
             self, selector: #selector(changed),
@@ -206,6 +210,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func playPause() {
         // Always allowed — launches Spotify as the deliberate "start" gesture.
         spotify.run("playpause") { [weak self] _ in self?.refresh() }
+    }
+
+    /// The host button's action. See decision #21 for why it exists and what was measured.
+    @objc func hostClicked() {
+        let event = NSApp.currentEvent
+        // Not a pointer click (VoiceOver press, keyboard menu-bar navigation, no event):
+        // play/pause is the one control present at every rung.
+        guard let event, event.type == .leftMouseUp else {
+            logClick(.play, cursor: NSEvent.mouseLocation, window: statusItem.button?.window?.frame ?? .zero)
+            playPause()
+            return
+        }
+        // Control-click is a menu gesture (see `.menu` above); acting as well would skip a
+        // track as the menu closes.
+        guard !event.modifierFlags.contains(.control) else { return }
+        guard let host = statusItem.button, let window = host.window else { return }
+
+        // The event's own location is the window's centre on macOS 27, whatever was
+        // clicked, so read the real cursor and lay out first: a click straight after a
+        // track change must not see the previous track's button positions.
+        host.layoutSubtreeIfNeeded()
+        let cursor = NSEvent.mouseLocation
+        let views: [(ClickTarget, NSView)] = [(.label, label), (.prev, prevButton),
+                                              (.play, playButton), (.next, nextButton)]
+        // Built from what is actually shown — `apply` owns `isHidden` — never re-derived
+        // from the rung, so the resolver cannot disagree with the drawing.
+        let zones = views.filter { !$0.1.isHidden }.map { target, view in
+            let frame = window.convertToScreen(view.convert(view.bounds, to: nil))
+            return ClickTarget.Zone(target: target, minX: frame.minX, maxX: frame.maxX)
+        }
+        let target = ClickTarget.resolve(cursor: cursor, window: window.frame, zones: zones)
+        logClick(target, cursor: cursor, window: window.frame)
+
+        switch target {
+        case .prev:  prev()
+        case .play:  playPause()
+        case .next:  next()
+        case .label: bringSpotifyForward()
+        case .none:  break   // a guess here would fire the wrong control
+        }
+    }
+
+    /// Activates Spotify if it is running. Never launches it: launching is play/pause's
+    /// deliberate gesture, and a click on the text should not start an app.
+    func bringSpotifyForward() {
+        guard let app = NSRunningApplication.runningApplications(
+                  withBundleIdentifier: "com.spotify.client").first,
+              let url = app.bundleURL else { return }
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        NSWorkspace.shared.openApplication(at: url, configuration: config)
     }
 
     // Coalesce PlaybackStateChanged bursts (Spotify fires several per change) into
@@ -417,14 +472,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return ceil(sizer.fittingSize.width)
     }
 
-    /// prev/next are unreachable at the playPause rung, so surface them in the
-    /// right-click menu exactly when the buttons are gone.
-    func prevNextMenuItems(hidden: Bool) {
-        menuPrevItem?.isHidden = hidden
-        menuNextItem?.isHidden = hidden
-        menuPrevNextSeparator?.isHidden = hidden
-    }
-
     /// Show exactly what this rung calls for. Hidden views leave the stack's layout,
     /// so no view is ever added or removed — the `.menu` wiring from decision #5 and
     /// the trailing anchor from #2 both survive untouched.
@@ -443,7 +490,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         host?.setAccessibilityLabel(fullTitle ?? "Spotify")
 
-        prevNextMenuItems(hidden: r.rung.showsPrevNext)
         resize(to: r.totalWidth)
         logLayout(r, requested: r.totalWidth)
     }
@@ -474,6 +520,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // own width post-eviction) — watch ceiling= for "no ratchet", not available=.
             + " ceiling=\(barCeiling.map { String(format: "%.1f", $0) } ?? "nil")"
             + " available=\(measuredAvailable().map { String(format: "%.1f", $0) } ?? "nil")"
+        Self.layoutLog.notice("\(msg, privacy: .public)")
+    }
+
+    /// Per-click diagnostic, behind the same `debugLayout` flag: what the event was, where
+    /// the cursor really was, and what it resolved to. This is how the Ctrl-F8 and
+    /// VoiceOver paths of decision #21 are checked by hand.
+    func logClick(_ target: ClickTarget, cursor: NSPoint, window: NSRect) {
+        guard UserDefaults.standard.bool(forKey: "debugLayout") else { return }
+        let e = NSApp.currentEvent
+        let msg = "[click]"
+            + " target=\(target)"
+            + " type=\(e.map { String(describing: $0.type.rawValue) } ?? "nil")"
+            + " cursor=\(NSStringFromPoint(cursor))"
+            + " eventLoc=\(e.map { NSStringFromPoint($0.locationInWindow) } ?? "nil")"
+            + " windowFrame=\(NSStringFromRect(window))"
         Self.layoutLog.notice("\(msg, privacy: .public)")
     }
 

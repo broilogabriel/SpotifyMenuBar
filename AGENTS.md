@@ -95,8 +95,8 @@ will likely reintroduce the bug noted.
 15. **Never add a rung below `playPause`, and never let the ladder bottom out to
     nothing.** `playPause` is the floor — the item must always render something. If a
     narrower rung is ever needed, its dropped controls must relocate into the
-    right-click menu the same way `playPause` moves prev/next there, or that
-    function becomes unreachable.
+    right-click menu, or that function becomes unreachable. Previous / Play/Pause / Next
+    are now in the menu at every rung (decision #21).
 16. **Clip detection was probed on 2026-08-19 and abandoned — do not reopen it without
     reading why.** The shipped behavior is the computed ceiling alone, and that is final,
     not pending. The probe showed the design targeted the wrong failure mode: with the bar
@@ -159,6 +159,41 @@ will likely reintroduce the bug noted.
     Verified by counting in-region status windows across a launch: **13 and stable** after
     the fix, where before it dropped to 12 within 200ms. That count is the eviction signal
     decision #16 lacked (see *Things NOT yet done*).
+21. **On macOS 27, left clicks are routed by cursor position in `hostClicked` — the host
+    button's action is NOT dead code.** Measured 2026-10-09 on macOS 27.0.1 (26A434), three
+    displays: clicking prev/play/next did nothing on any display, externals unplugged or
+    not, while the right-click menu worked. Every click logs
+    `[com.apple.AppKit:StatusBar] 0 menu bar navigation requesting perform action` then
+    `(AppKit) trackMouse send action on mouseUp`, through a `com.apple.appkit.status-items`
+    scene: the menu bar delivers ONE action to the host button, never a hit-tested click to
+    the subviews, and the host had no action. A probe on the host logged 10 clicks:
+    `currentEvent` is `leftMouseUp` on our window, but `locationInWindow` was **always**
+    `{117.5, 16.5}` — the exact centre of the 235x33 window — so `hitTest` always says
+    label. **`NSEvent.mouseLocation` is real**, and the window frame is on the display that
+    was clicked (x=1835 on the external, x=3563 on the built-in), so cursor minus the
+    controls' screen frames recovers the target; `ClickTarget.resolve` does that.
+    Rules that each cost a review round to get right:
+    - **A left click the resolver can't place does nothing.** A stale frame or a pointer
+      that moved before the action arrived must not fire a guessed control. Only a
+      non-pointer action (VoiceOver press, keyboard menu-bar navigation, no event) plays
+      or pauses — the one control present at every rung.
+    - **The label is a zone** (→ bring Spotify forward, never launch it). Without it, the
+      midpoint split hands the whole text area to prev.
+    - **Zones come from views' `isHidden`, never from the rung**, so the resolver cannot
+      disagree with the drawing; they split at midpoints so gaps and half-point frames
+      leave no dead sliver, and the outermost run to the window edges.
+    - **Vertical bounds have 2pt slack.** The built-in item window ends exactly at the
+      screen top (maxY 1117), and `CGRect.contains` would reject a top-pixel click.
+    - **Control-click returns early** — it is the menu gesture; acting too would skip a
+      track as the menu closes.
+    Accepted, not handled: the cursor is read when the action arrives, not at mouse-up; and
+    a click landing during `remeasureCeiling()`'s shrink acts on what is shown then (the
+    lone play button sits where next was, because of the trailing anchor). Where real
+    clicks still reach the buttons (older macOS, inferred), the buttons consume them and
+    the host action only fires for the label and gaps. Check by hand with
+    `debugLayout`, which logs a `[click]` line per action. Same macOS 27 change, still
+    open: `_updateReplicants` redraws the item continuously (~50% CPU), and
+    `CGWindowList` lists no status-item windows, so decision #19's ceiling is always nil.
 
 ## Spotify integration facts
 

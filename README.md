@@ -28,7 +28,9 @@ of bug can't happen.
   it (or a neighbour). On a busy bar this means it will settle for controls-only or
   play/pause-only rather than displacing something — that's intended. Pin a specific
   layout from **right-click → Display** if you'd rather override that.
-- **Right-click** for **Display** (pin a layout), **Launch at Login**, and **Quit**.
+- **Right-click** for **Previous / Play/Pause / Next**, **Display** (pin a layout),
+  **Launch at Login**, and **Quit**.
+- **Click the track text** to bring Spotify to the front.
 - Single menu-bar item, right-anchored, so it survives the MacBook **notch** and the
   buttons don't shift when the track text changes length.
 
