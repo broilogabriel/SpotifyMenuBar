@@ -12,7 +12,8 @@ Quick reference:
 - Controls the local Spotify desktop app via AppleScript. No API keys / OAuth /
   network — do not add any.
 - AGENTS.md lists hard-won design decisions (notch handling, trailing anchor,
-  AppleScript re-query, smart-previous, `.menu` for right-click). Don't regress them.
+  AppleScript re-query, smart-previous, `.menu` for right-click, macOS 27 click routing
+  via the host button's action). Don't regress them.
 - **Never add AI attribution** (`Co-Authored-By`, "Generated with Claude", etc.) to
   commits, PRs, comments, or anything. See AGENTS.md → "Attribution — hard rule".
 - Superpowers specs/plans under `docs/superpowers/` are **versioned and committed** — no

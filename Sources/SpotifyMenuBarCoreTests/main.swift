@@ -397,4 +397,74 @@ rd.set(26, forKey: "barReserve")
 expectClose(Double(Settings.barReserve(rd)), 26, "a sane reserve is honoured")
 rd.removePersistentDomain(forName: "SpotifyMenuBarTests.reserve")
 
+// MARK: ClickTarget — routing macOS 27's centred click by cursor position (decision #21)
+
+// Geometry from the 2026-10-09 probe on the Q32: a 235pt window at x=1835 whose host
+// sits 8pt in, with prev/play/next at host x 155/177/199. Zones are in screen space.
+let win = CGRect(x: 1835, y: 1409, width: 235, height: 33)
+func zone(_ t: ClickTarget, _ hostX: CGFloat, _ w: CGFloat) -> ClickTarget.Zone {
+    ClickTarget.Zone(target: t, minX: win.minX + 8 + hostX, maxX: win.minX + 8 + hostX + w)
+}
+let labelZone = zone(.label, 4, 145)
+let prevZone = zone(.prev, 155, 16.5)
+let playZone = zone(.play, 177, 16.5)
+let nextZone = zone(.next, 199, 16)
+let fullZones = [labelZone, prevZone, playZone, nextZone]
+func click(_ x: CGFloat, _ y: CGFloat = 1425, _ zones: [ClickTarget.Zone] = fullZones,
+           _ w: CGRect = win) -> ClickTarget {
+    ClickTarget.resolve(cursor: CGPoint(x: x, y: y), window: w, zones: zones)
+}
+
+// The probe's own cursor readings, which map onto the buttons the user aimed at.
+expect(click(2008.9), .prev, "probe click 1 lands on prev")
+expect(click(2025.2), .play, "probe click 3 lands on play")
+expect(click(2053.7), .next, "probe click 2 lands on next")
+expect(click(1900), .label, "a click on the text resolves to the label")
+
+// Gaps between controls belong to the nearer neighbour, split at the midpoint.
+let prevPlayGap = (prevZone.maxX + playZone.minX) / 2
+expect(click(prevPlayGap - 0.5), .prev, "just left of the prev/play midpoint is prev")
+expect(click(prevPlayGap), .play, "the exact midpoint goes to the right-hand zone")
+let labelPrevGap = (labelZone.maxX + prevZone.minX) / 2
+expect(click(labelPrevGap - 0.5), .label, "just left of the label/prev midpoint is the label")
+
+// Outer zones run to the window edges, closed on both sides.
+expect(click(win.minX), .label, "the window's left edge is the label at full")
+expect(click(win.maxX), .next, "the window's right edge (padding past next) is next")
+expect(click(win.maxX - 2), .next, "padding right of next counts as next")
+
+// Without a label (Controls Only), the left padding belongs to prev, not the text.
+let iconZones = [prevZone, playZone, nextZone]
+expect(click(win.minX + 2, 1425, iconZones), .prev, "left padding is prev when the label is hidden")
+expect(click(1900, 1425, iconZones), .prev, "the old text area is prev at Controls Only")
+
+// Play/Pause Only: the single visible control owns the whole window.
+expect(click(2053.7, 1425, [playZone]), .play, "with only play visible, anywhere is play")
+
+// Outside the window: nothing, never a guessed action.
+expect(click(win.minX - 1), .none, "left of the window is nothing")
+expect(click(win.maxX + 1), .none, "right of the window is nothing")
+expect(click(2008.9, 400), .none, "in the item's column but far below is nothing")
+expect(click(2008.9, 1425, []), .none, "no visible zones is nothing")
+
+// Vertical slack: the built-in display's window top equals the screen top (1117).
+let builtIn = CGRect(x: 3563, y: 1084, width: 235, height: 33)
+let builtInPrev = ClickTarget.Zone(target: .prev, minX: 3563 + 8 + 155, maxX: 3563 + 8 + 171.5)
+expect(click(3730, 1117, [builtInPrev], builtIn), .prev, "a click on the top pixel still counts")
+expect(click(3730, 1119, [builtInPrev], builtIn), .prev, "within the 2pt slack above counts")
+expect(click(3730, 1120, [builtInPrev], builtIn), .none, "beyond the slack is nothing")
+
+// Negative-origin display (the portrait T27p at x=-1080).
+let portrait = CGRect(x: -776, y: 1408, width: 310, height: 33)
+let portraitZones = [
+    ClickTarget.Zone(target: .label, minX: -764, maxX: -540),
+    ClickTarget.Zone(target: .next, minX: -500, maxX: -484),
+]
+expect(click(-770, 1420, portraitZones, portrait), .label, "negative X: left padding is the label")
+expect(click(-490, 1420, portraitZones, portrait), .next, "negative X: next resolves")
+
+// Zones arriving out of order are sorted, so the caller's view order can't matter.
+expect(click(2053.7, 1425, [nextZone, labelZone, playZone, prevZone]), .next,
+       "zone order does not change the result")
+
 summarize()
