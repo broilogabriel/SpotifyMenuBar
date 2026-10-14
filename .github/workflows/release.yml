@@ -46,9 +46,11 @@ jobs:
             exit 1
           fi
 
+      # The same recipe the formula runs, so its SDK pin and check gate the release
+      # too (AGENTS.md decision #22).
       - name: Build
         if: ${{ steps.release.outputs.release_created == 'true' }}
-        run: swift build -c release
+        run: ./build-app.sh
 
       - name: Unit checks
         if: ${{ steps.release.outputs.release_created == 'true' }}

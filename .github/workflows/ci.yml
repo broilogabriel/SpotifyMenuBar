@@ -23,7 +23,8 @@ jobs:
         run: swift run SpotifyMenuBarCoreTests
 
       # Catches packaging breakage (bundle assembly, ad-hoc signing) without
-      # needing a signing identity. Cannot catch the no-eviction guarantee --
+      # needing a signing identity, and fails if the binary records the wrong SDK --
+      # which is how a runner toolchain change shows up (AGENTS.md decision #22). Cannot catch the no-eviction guarantee --
       # verify-no-eviction.sh needs a real menu bar on a real display and stays
       # a manual pre-PR gate.
       - name: Package app bundle

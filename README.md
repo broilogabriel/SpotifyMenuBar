@@ -55,17 +55,21 @@ swift run
   **Ctrl-C** in the terminal or **right-click → Quit**.
 - `swift build` compiles without launching.
 
-## Install as a launch-at-login app
+## Run a local build
 
-To run it as a normal clickable app that starts automatically at login (no terminal):
+To try a change as a normal clickable app (no terminal), build and run it **from the
+repo folder**:
 
 ```bash
-./build-app.sh                          # produces SpotifyMenuBar.app (ad-hoc signed)
-mv SpotifyMenuBar.app /Applications/     # recommended location for login items
-open /Applications/SpotifyMenuBar.app
+./build-app.sh                  # produces SpotifyMenuBar.app (ad-hoc signed)
+open SpotifyMenuBar.app
 ```
 
-Then **right-click the menu-bar item → Launch at Login** to toggle it on (a
+**Do not move a local build into `/Applications`.** It has the same bundle ID as the
+installed app and silently shadows it: a stale local build once ran for weeks in place
+of the Homebrew one. To install, use [Homebrew](#install-with-homebrew).
+
+**Right-click the menu-bar item → Launch at Login** toggles starting at login (a
 checkmark shows the current state). This uses Apple's `SMAppService` (macOS 13+);
 the toggle also appears under **System Settings → General → Login Items**.
 
@@ -106,6 +110,20 @@ Right-click -> Launch at Login off, then on again.
 
 Upgrading also re-signs the bundle with a new code identity, so the one-time
 "control Spotify" prompt reappears. Expected, not a bug.
+
+## Which build is running?
+
+The right-click menu shows a greyed-out line just above **Quit**, e.g.
+`1.2.1 · SDK 27.0`, or `1.2.0 (990943d) · SDK 27.0 · dev` for a local build. It comes
+from what `build-app.sh` stamped into the bundle:
+
+- **`· dev`** — built from a checkout that is not exactly a release tag. If you meant
+  to be on Homebrew, `/Applications/SpotifyMenuBar.app` is not the symlink.
+- **`· unstamped build`** — not made by `build-app.sh` at all.
+- **The SDK** is the one the binary records. It should match your macOS's SDK
+  (`xcrun --show-sdk-version`). An older stamp makes AppKit treat the app as an old one;
+  on macOS 27 that showed up as roughly double the CPU. `build-app.sh` refuses to
+  package a binary with a wrong stamp, so seeing one means the build bypassed it.
 
 ## Configuration
 

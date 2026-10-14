@@ -467,4 +467,17 @@ expect(click(-490, 1420, portraitZones, portrait), .next, "negative X: next reso
 expect(click(2053.7, 1425, [nextZone, labelZone, playZone, prevZone]), .next,
        "zone order does not change the result")
 
+// MARK: BuildInfo — the menu's "which build is this" line (decision #22)
+
+expect(BuildInfo.describe(version: "1.2.0", commit: "990943d", sdk: "27.0", channel: "dev"),
+       "1.2.0 (990943d) · SDK 27.0 · dev", "a dev build shows commit, SDK and channel")
+expect(BuildInfo.describe(version: "1.2.1", commit: "", sdk: "27.0", channel: "release"),
+       "1.2.1 · SDK 27.0", "a release tarball build has no commit and no channel suffix")
+expect(BuildInfo.describe(version: "1.2.1", commit: "abc1234", sdk: "27.0", channel: "release"),
+       "1.2.1 (abc1234) · SDK 27.0", "a tagged checkout build shows its commit but no suffix")
+expect(BuildInfo.describe(version: "1.2.0", commit: nil, sdk: nil, channel: nil),
+       "1.2.0 · unstamped build", "a bundle not made by build-app.sh says so")
+expect(BuildInfo.describe(version: nil, commit: nil, sdk: nil, channel: nil),
+       "unknown version · unstamped build", "no Info.plist at all (swift run) still renders")
+
 summarize()
