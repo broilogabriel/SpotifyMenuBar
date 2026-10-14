@@ -54,9 +54,13 @@ will likely reintroduce the bug noted.
    did **not** fire on the status-bar button — don't reintroduce it. `.menu` on the
    button and each subview was the fix for that and worked until macOS 27, where it
    opens the menu at the real status window, which sits on the *focused* display rather
-   than the one clicked (2026-10-14, three displays). The host now sends its action on
-   `.rightMouseDown` too and `hostClicked` calls `popUp(positioning:at:in: nil)` at
-   `NSEvent.mouseLocation`. See decision #21 for the event rules.
+   than the one clicked (2026-10-14, three displays). An app-local event monitor now
+   swallows `.rightMouseDown` aimed at our status window and pops the menu with
+   `popUp(positioning:at:in: nil)` at `NSEvent.mouseLocation` on the next run-loop turn.
+   **Never take right-clicks as a button action** (`sendAction(on: .rightMouseDown)`): it
+   starts the cell's `trackMouse` loop, the matching mouse-up never arrives under macOS
+   27's remote delivery, and the app froze — 0% CPU, AppleEvents timing out — until the
+   next right-click. See decision #21 for the other event rules.
 6. **`statusItem.length` is recomputed in `resize(to:)`** (called from `apply()`) from
    the stack's `fittingSize` because the item uses a custom view (variable-length
    sizing won't track custom subviews automatically).
@@ -189,10 +193,10 @@ will likely reintroduce the bug noted.
     - **Vertical bounds have 2pt slack.** The built-in item window ends exactly at the
       screen top (maxY 1117), and `CGRect.contains` would reject a top-pixel click.
     - **Right-click arrives as a remote "secondary action"** (`perform secondary action
-      type=1`), yielding exactly ONE host action: `rightMouseDown` normally, but
-      `rightMouseUp` when that same right-click closed a menu that was still open. **Both
-      pop the menu**, as does Control-click; measured 2026-10-14, handling only
-      `rightMouseDown` made reaching the menu from an open one take two right-clicks.
+      type=1`) that AppKit turns into a `rightMouseDown` on our status window; the monitor
+      in decision #5 takes it. Control-click arrives as a left-click action with `.control`
+      held and pops the same menu. A click on the item while a menu is open only closes
+      that menu — standard macOS menu behaviour, accepted.
     - **Only a non-mouse event falls back to play/pause.** Any other mouse event does
       nothing: an earlier gate (`!= .leftMouseUp` → play/pause) made every second
       right-click pause playback.

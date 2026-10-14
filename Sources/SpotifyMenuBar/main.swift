@@ -45,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var nextButton: NSButton!
     var loginItem: NSMenuItem!
     var contextMenu: NSMenu!
+    private var rightClickMonitor: Any?
     private var pendingRefresh: DispatchWorkItem?
     // Remembered so a momentarily screen-less window (early launch, display sleep)
     // reuses the last good geometry instead of collapsing to the floor.
@@ -157,7 +158,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // this only fires for the label and the gaps. AGENTS.md decision #21.
         host.target = self
         host.action = #selector(hostClicked)
-        host.sendAction(on: [.leftMouseUp, .rightMouseDown])
+        // Right-clicks are taken HERE, before dispatch, never as a button action: sending the
+        // action on rightMouseDown starts the cell's mouse-tracking loop, and under macOS 27's
+        // remote delivery the matching mouse-up never arrives, so the app froze in
+        // `trackMouse` until the next right-click. Swallowing the event means no tracking
+        // starts; the menu pops on the next turn, outside the monitor. Decision #5.
+        rightClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { [weak self] event in
+            guard let self, let w = self.statusItem.button?.window, event.window === w else { return event }
+            DispatchQueue.main.async { self.showContextMenu() }
+            return nil
+        }
         host.setAccessibilityHelp("Play or pause")
 
         DistributedNotificationCenter.default().addObserver(
@@ -218,13 +228,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// The host button's action. See decision #21 for why it exists and what was measured.
     @objc func hostClicked() {
         let event = NSApp.currentEvent
-        // Right-click, or Control-click (the same gesture on a one-button mouse): the menu,
-        // at the cursor's screen rather than the status window's. A right-click made while
-        // a menu is still open arrives as rightMouseUp instead (it is the click that closed
-        // that menu), and each secondary action yields exactly one of the two -- so both
-        // open the menu, or reaching it from an open menu takes two right-clicks.
-        if let event, event.type == .rightMouseDown || event.type == .rightMouseUp
-            || (event.type == .leftMouseUp && event.modifierFlags.contains(.control)) {
+        // Control-click is the right-click gesture on a one-button mouse; real right-clicks
+        // never get here (the monitor in applicationDidFinishLaunching swallows them).
+        if let event, event.type == .leftMouseUp, event.modifierFlags.contains(.control) {
             showContextMenu()
             return
         }
