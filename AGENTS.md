@@ -210,8 +210,9 @@ will likely reintroduce the bug noted.
     clicks still reach the buttons (older macOS, inferred), the buttons consume them and
     the host action only fires for the label and gaps. Check by hand with
     `debugLayout`, which logs a `[click]` line per action. Same macOS 27 change, still
-    open: `_updateReplicants` redraws the item continuously (~50% CPU), and
-    `CGWindowList` lists no status-item windows, so decision #19's ceiling is always nil.
+    open: `CGWindowList` lists no status-item windows, so decision #19's ceiling is
+    always nil. (The continuous `_updateReplicants` redraw found alongside it is fixed;
+    see #23.)
 
 22. **Every shipped binary is built by `build-app.sh`, which stamps the installed SDK and
     refuses a binary that records anything else.** Measured 2026-10-14 on macOS 27.0.1 with
@@ -232,6 +233,23 @@ will likely reintroduce the bug noted.
     bundle's Info.plist; `BuildInfo.describe` renders them as the disabled line above
     **Quit**, and `debugLayout` logs it as `[build]` at launch. That line is the first
     thing to check when behaviour differs between machines or builds.
+
+23. **The track text is drawn by `TrackLabel`, a plain `NSView` — never put a text-drawing
+    control (`NSTextField`, a titled `NSButton`) inside the status button.** On macOS 27
+    such a subview keeps `-[NSStatusItem _updateReplicants]` re-snapshotting the item
+    for every display's menu bar, forever, even while the subview is hidden: ~95% CPU
+    idle for the label + three buttons, ~45% for a lone text field (issue #11, measured
+    2026-11-12 on macOS 27.2 with three displays). Image-only `NSButton`s and a view
+    that draws its string in `draw(_:)` stay at 0%. Partial mechanism: each snapshot
+    sets the source view's appearance, which reaches `-[NSTextField updateCell:]` →
+    `setNeedsDisplay`; blocking that path alone did not stop the loop, and no
+    `NSTextField` setting tried (`wantsLayer`, fixed colour, `allowsVibrancy = false`,
+    attributed string) did either. The loop does not start on every launch, so judge a
+    change over several launches, never one 0% reading. The SDK stamp of #22 scales the
+    cost per iteration but does not cause the loop.
+    `TrackLabel` takes the width the text field actually took in the stack (the bare
+    text width), and `measureLabel` asks `TrackLabel` itself, so the budget and the
+    drawn width are one computation and the clamp in `resize(to:)` cannot crop.
 
 ## Spotify integration facts
 
