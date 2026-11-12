@@ -42,35 +42,42 @@ final class SpotifyClient {
 /// `-[NSStatusItem _updateReplicants]` re-snapshotting the item forever (~95% CPU, even
 /// while hidden). A plain view drawing a string does not. AGENTS.md decision #23.
 ///
-/// Takes the width the `NSTextField(labelWithString:)` it replaced actually took in the
-/// stack: its intrinsic width was the bare text width (measured: 191.5 for a 191.36pt
-/// string), with no cell inset. The old `measureLabel` used the field's standalone
-/// `fittingSize`, which adds 4pt the stack never gave it, so the budget was 4pt pessimistic.
+/// Takes the same slot and draws the text in the same place as the
+/// `NSTextField(labelWithString:)` it replaced. The field's cell drew 2pt in from each
+/// side of its frame, but its `alignmentRectInsets` were 2pt each side too, so the stack
+/// laid it out at the bare text width with the ink at the slot's edge. The old
+/// `measureLabel` used the field's standalone `fittingSize`, which counts those 4pt, so
+/// the budget was 4pt pessimistic. (Measured in a stack, menu-bar font: field slot 178.5
+/// for a 178.06pt string; `stack.fittingSize` and ink positions equal for both views.)
 final class TrackLabel: NSView {
-    var font = NSFont.menuBarFont(ofSize: 0) {
-        didSet { textChanged() }
-    }
+    // Set once, as the field's font was; nothing re-resolves it.
+    private let font = NSFont.menuBarFont(ofSize: 0)
+
     var text = "" {
         didSet { if text != oldValue { textChanged() } }
     }
 
-    // Resolved per draw, never cached: `labelColor` is dynamic, and AppKit sets the
-    // current appearance to this view's own before calling `draw(_:)`.
+    // The colour is resolved per draw, never cached: `labelColor` is dynamic, and AppKit
+    // sets the current appearance to this view's own before calling `draw(_:)`.
     private func attributes() -> [NSAttributedString.Key: Any] {
         [.font: font, .foregroundColor: NSColor.labelColor]
+    }
+
+    private func size(of s: String) -> NSSize {
+        (s as NSString).size(withAttributes: attributes())
     }
 
     /// The width this view takes for `s`. The one measurement the layout budget and the
     /// view's own size share, so `resize(to:)`'s clamp can never crop the text.
     func width(for s: String) -> CGFloat {
-        ceil((s as NSString).size(withAttributes: attributes()).width)
+        ceil(size(of: s).width)
     }
 
     override var isFlipped: Bool { true }   // text hangs from the top, as in the field
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: width(for: text),
-               height: ceil((text as NSString).size(withAttributes: attributes()).height))
+        let s = size(of: text)
+        return NSSize(width: ceil(s.width), height: ceil(s.height))
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -560,8 +567,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Text measurement is AppKit-only, so `BarLayout` takes it as a closure.
     ///
-    /// Asks the label itself, with its current font, so the resolver's model and the
-    /// drawn width are one computation. If they disagree, the clamp in `resize(to:)`
+    /// Asks the label itself, so the resolver's model and the drawn width are one
+    /// computation. If they disagree, the clamp in `resize(to:)`
     /// silently crops the first glyph.
     func measureLabel(_ s: String) -> CGFloat {
         label.width(for: s)
