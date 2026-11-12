@@ -39,16 +39,17 @@ final class SpotifyClient {
 
 /// The track text, drawn by the view itself. Not an `NSTextField`: on macOS 27 any
 /// subview of the status button whose control cell draws text keeps
-/// `-[NSStatusItem _updateReplicants]` re-snapshotting the item forever (~95% CPU, even
-/// while hidden). A plain view drawing a string does not. AGENTS.md decision #23.
+/// `-[NSStatusItem _updateReplicants]` re-snapshotting the item forever (up to ~95% CPU,
+/// even while hidden). A plain view drawing a string does not. AGENTS.md decision #23.
 ///
-/// Takes the same slot and draws the text in the same place as the
-/// `NSTextField(labelWithString:)` it replaced. The field's cell drew 2pt in from each
-/// side of its frame, but its `alignmentRectInsets` were 2pt each side too, so the stack
-/// laid it out at the bare text width with the ink at the slot's edge. The old
-/// `measureLabel` used the field's standalone `fittingSize`, which counts those 4pt, so
-/// the budget was 4pt pessimistic. (Measured in a stack, menu-bar font: field slot 178.5
-/// for a 178.06pt string; `stack.fittingSize` and ink positions equal for both views.)
+/// Takes the bare text width rounded up, and draws the text where the
+/// `NSTextField(labelWithString:)` it replaced did. The field's cell drew 2pt in from
+/// each side of its frame, but its `alignmentRectInsets` were 2pt each side too, so the
+/// stack laid it out at the bare text width (within 1pt: its slot could be fractional)
+/// with the ink at the slot's edge. The old `measureLabel` used the field's standalone
+/// `fittingSize`, which counts those 4pt, so the budget was 4pt pessimistic. (Measured in
+/// a stack, menu-bar font: field slot 178.5 for a 178.06pt string, `TrackLabel` 179;
+/// `stack.fittingSize` and ink positions equal for both views.)
 final class TrackLabel: NSView {
     // Set once, as the field's font was; nothing re-resolves it.
     private let font = NSFont.menuBarFont(ofSize: 0)
@@ -63,22 +64,19 @@ final class TrackLabel: NSView {
         [.font: font, .foregroundColor: NSColor.labelColor]
     }
 
+    /// The size this view takes for `s`: the one measurement, and the one rounding, that
+    /// the layout budget and the view's own size share, so `resize(to:)`'s clamp can
+    /// never crop the text.
     private func size(of s: String) -> NSSize {
-        (s as NSString).size(withAttributes: attributes())
+        let z = (s as NSString).size(withAttributes: attributes())
+        return NSSize(width: ceil(z.width), height: ceil(z.height))
     }
 
-    /// The width this view takes for `s`. The one measurement the layout budget and the
-    /// view's own size share, so `resize(to:)`'s clamp can never crop the text.
-    func width(for s: String) -> CGFloat {
-        ceil(size(of: s).width)
-    }
+    func width(for s: String) -> CGFloat { size(of: s).width }
 
     override var isFlipped: Bool { true }   // text hangs from the top, as in the field
 
-    override var intrinsicContentSize: NSSize {
-        let s = size(of: text)
-        return NSSize(width: ceil(s.width), height: ceil(s.height))
-    }
+    override var intrinsicContentSize: NSSize { size(of: text) }
 
     override func draw(_ dirtyRect: NSRect) {
         (text as NSString).draw(at: .zero, withAttributes: attributes())
