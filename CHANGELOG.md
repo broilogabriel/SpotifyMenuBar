@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/broilogabriel/SpotifyMenuBar/compare/v1.3.0...v1.3.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* draw the track text in a plain view to stop the replicant redraw loop ([#12](https://github.com/broilogabriel/SpotifyMenuBar/issues/12)) ([fa253f5](https://github.com/broilogabriel/SpotifyMenuBar/commit/fa253f532a45ba077af13689272e8f03949e29bd))
+
 ## [1.3.0](https://github.com/broilogabriel/SpotifyMenuBar/compare/v1.2.0...v1.3.0) (2026-10-14)
 
 
