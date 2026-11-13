@@ -35,11 +35,70 @@ final class SpotifyClient {
     }
 }
 
+// MARK: - Track label
+
+/// The track text, drawn by the view itself. Not an `NSTextField`: on macOS 27 any
+/// subview of the status button whose control cell draws text keeps
+/// `-[NSStatusItem _updateReplicants]` re-snapshotting the item forever (up to ~95% CPU,
+/// even while hidden). A plain view drawing a string does not. AGENTS.md decision #23.
+///
+/// Takes the bare text width rounded up, and draws the text where the
+/// `NSTextField(labelWithString:)` it replaced did. The field's cell drew 2pt in from
+/// each side of its frame, but its `alignmentRectInsets` were 2pt each side too, so the
+/// stack laid it out at the bare text width (within 1pt: its slot could be fractional)
+/// with the ink at the slot's edge. The old `measureLabel` used the field's standalone
+/// `fittingSize`, which counts those 4pt, so the budget was 4pt pessimistic. (Measured in
+/// a stack, menu-bar font: field slot 178.5 for a 178.06pt string, `TrackLabel` 179;
+/// `stack.fittingSize` and ink positions equal for both views.)
+final class TrackLabel: NSView {
+    // Set once, as the field's font was; nothing re-resolves it.
+    private let font = NSFont.menuBarFont(ofSize: 0)
+
+    var text = "" {
+        didSet { if text != oldValue { textChanged() } }
+    }
+
+    // The colour is resolved per draw, never cached: `labelColor` is dynamic, and AppKit
+    // sets the current appearance to this view's own before calling `draw(_:)`.
+    private func attributes() -> [NSAttributedString.Key: Any] {
+        [.font: font, .foregroundColor: NSColor.labelColor]
+    }
+
+    /// The size this view takes for `s`: the one measurement, and the one rounding, that
+    /// the layout budget and the view's own size share, so `resize(to:)`'s clamp can
+    /// never crop the text.
+    private func size(of s: String) -> NSSize {
+        let z = (s as NSString).size(withAttributes: attributes())
+        return NSSize(width: ceil(z.width), height: ceil(z.height))
+    }
+
+    func width(for s: String) -> CGFloat { size(of: s).width }
+
+    override var isFlipped: Bool { true }   // text hangs from the top, as in the field
+
+    override var intrinsicContentSize: NSSize { size(of: text) }
+
+    override func draw(_ dirtyRect: NSRect) {
+        (text as NSString).draw(at: .zero, withAttributes: attributes())
+    }
+
+    private func textChanged() {
+        invalidateIntrinsicContentSize()
+        needsDisplay = true
+        setAccessibilityValue(text)
+    }
+
+    // Stays a static-text element, as the text field was; the host's accessibility
+    // label still carries the full title at every rung (decision #18).
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .staticText }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let spotify = SpotifyClient()
     var statusItem: NSStatusItem!
     var stack: NSStackView!
-    var label: NSTextField!
+    var label: TrackLabel!
     var playButton: NSButton!
     var prevButton: NSButton!
     var nextButton: NSButton!
@@ -91,9 +150,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         guard let host = statusItem.button else { return }
 
-        label = NSTextField(labelWithString: "♪")
-        label.font = NSFont.menuBarFont(ofSize: 0)
-        label.textColor = .labelColor
+        label = TrackLabel()
+        label.text = "♪"
 
         prevButton = control("backward.fill", "Previous", #selector(prev))
         playButton = control("play.fill", "Play or pause", #selector(playPause))
@@ -505,23 +563,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return max(windowSpace - padding, 0)
     }
 
-    // Measured with a real NSTextField, not a bare NSString: the field's cell adds ~4pt
-    // of inset, and if the resolver's model disagrees with the label's the clamp in
-    // resize(to:) silently crops the first glyph.
-    private lazy var sizer: NSTextField = {
-        let f = NSTextField(labelWithString: "")
-        f.font = label.font
-        return f
-    }()
-
     /// Text measurement is AppKit-only, so `BarLayout` takes it as a closure.
+    ///
+    /// Asks the label itself, so the resolver's model and the drawn width are one
+    /// computation. If they disagree, the clamp in `resize(to:)`
+    /// silently crops the first glyph.
     func measureLabel(_ s: String) -> CGFloat {
-        // The label's font can change after `sizer` is created (e.g. a screen change
-        // re-resolving `menuBarFont`); a stale model font is the one path that lets
-        // `resize`'s clamp bind and crop the label's first character.
-        sizer.font = label.font
-        sizer.stringValue = s
-        return ceil(sizer.fittingSize.width)
+        label.width(for: s)
     }
 
     /// Show exactly what this rung calls for. Hidden views leave the stack's layout,
@@ -531,7 +579,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         label.isHidden = !r.rung.showsLabel
         prevButton.isHidden = !r.rung.showsPrevNext
         nextButton.isHidden = !r.rung.showsPrevNext
-        if let text = r.labelText { label.stringValue = text }
+        if let text = r.labelText { label.text = text }
 
         // At iconic rungs the label is gone, so the tooltip and the VoiceOver name
         // are the only remaining way to learn what is playing. Put them on the host

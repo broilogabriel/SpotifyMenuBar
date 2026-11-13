@@ -83,7 +83,7 @@ will likely reintroduce the bug noted.
 11. **`PlaybackStateChanged` is debounced (~100 ms).** Spotify fires several
     notifications per change; coalescing avoids redundant AppleScript queries.
 12. **Icon buttons carry VoiceOver labels** (`accessibilityDescription`): "Previous",
-    "Play or pause", "Next". The label field is already readable.
+    "Play or pause", "Next". The label view is already readable (static text, #23).
 13. **`Settings.current()` clamps UserDefaults values** (`maxTrack`/`maxArtist` ≥ 1,
     `prevRestartSecs` ≥ 0) so a bad `defaults write` can't break layout.
 14. **Never request more width than the budget allows.** The ceiling is computed in
@@ -210,8 +210,9 @@ will likely reintroduce the bug noted.
     clicks still reach the buttons (older macOS, inferred), the buttons consume them and
     the host action only fires for the label and gaps. Check by hand with
     `debugLayout`, which logs a `[click]` line per action. Same macOS 27 change, still
-    open: `_updateReplicants` redraws the item continuously (~50% CPU), and
-    `CGWindowList` lists no status-item windows, so decision #19's ceiling is always nil.
+    open: `CGWindowList` lists no status-item windows, so decision #19's ceiling is
+    always nil. (The continuous `_updateReplicants` redraw found alongside it is fixed;
+    see #23.)
 
 22. **Every shipped binary is built by `build-app.sh`, which stamps the installed SDK and
     refuses a binary that records anything else.** Measured 2026-10-14 on macOS 27.0.1 with
@@ -222,7 +223,9 @@ will likely reintroduce the bug noted.
     found. AppKit keys behaviour off that stamp: the same source ran at **~90% CPU stamped
     13.0 and ~55% stamped 26.5** (60s each, same display mode, three runs). Homebrew 1.2.0,
     compiled on Aug 24 with the 26.5 tools, was fine; every local build after the macOS 27
-    upgrade was not, and nothing on screen said so.
+    upgrade was not, and nothing on screen said so. That CPU was most likely the redraw
+    loop of #23 (inferred: these runs were not re-sampled), whose cost the stamp scales
+    but which it does not cause. Why 1.2.0 looked fine is unexplained (not re-measured).
     The fix is in `build-app.sh`: `-Xlinker -platform_version -Xlinker macos -Xlinker
     <LSMinimumSystemVersion> -Xlinker "$(xcrun --show-sdk-version)"`, then a `vtool` check
     that exits non-zero on a mismatch. CI runs the script, so a runner toolchain change
@@ -232,6 +235,39 @@ will likely reintroduce the bug noted.
     bundle's Info.plist; `BuildInfo.describe` renders them as the disabled line above
     **Quit**, and `debugLayout` logs it as `[build]` at launch. That line is the first
     thing to check when behaviour differs between machines or builds.
+
+23. **The track text is drawn by `TrackLabel`, a plain `NSView` — never put a text-drawing
+    control (`NSTextField`, a titled `NSButton`) inside the status button.** On macOS 27
+    such a subview keeps `-[NSStatusItem _updateReplicants]` re-snapshotting the item
+    for every display's menu bar, forever, even while the subview is hidden: 80-97% CPU
+    idle for the label + three buttons, ~45% for a lone text field, ~50% for a lone
+    titled `NSButton` (issue #11, measured in probe apps 2026-11-12 on macOS 27.2 with
+    three displays). Image-only `NSButton`s and a view that draws its string in
+    `draw(_:)` stay at 0%. On the real app, same day: Homebrew 1.3.0 ran at 74-93% in
+    every display mode (2 of 2 launches looped); the `TrackLabel` build at 0-0.4% with
+    no `_updateReplicants` samples over 13 launches, each cycling every display mode,
+    and at 0-0.01% over 4 minutes idle. Light/dark switching and display hot-plug were
+    not measured. Partial mechanism: each snapshot sets the source view's appearance,
+    which reaches `-[NSTextField updateCell:]` → `setNeedsDisplay`; blocking that path
+    alone did not stop the loop, and no `NSTextField` setting tried (`wantsLayer`, fixed
+    colour, `allowsVibrancy = false`, attributed string) did either. The loop can fail
+    to start (one probe variant started it in 5 of 12 launches, though the app's own
+    stack started it 10 of 10), so judge a change over several launches, never one 0%
+    reading. The SDK stamp of #22 scales the cost per iteration but does not cause the
+    loop.
+    `TrackLabel` takes the bare text width rounded up, which is the slot the text field
+    took in the stack to within 1pt (the field's 2pt cell padding was cancelled by its
+    `alignmentRectInsets`),
+    and `measureLabel` asks `TrackLabel` itself, so the budget and the drawn width are
+    one computation and the clamp in `resize(to:)` cannot crop. The old `measureLabel`
+    read the field's standalone `fittingSize`, 4pt more than the stack gave it, so a
+    title within 4pt of a rung or ellipsis boundary now shows slightly more text; the
+    item's on-screen width for a given text is unchanged.
+    `TrackLabel` reports itself as static text with the shown text as its value, as the
+    field did (#12); the host keeps the full title (#18). One rendering difference: in
+    a `cacheDisplay` snapshot the field composited `labelColor` text twice, so the old
+    text was close to opaque while `TrackLabel` draws at `labelColor`'s own 0.85 alpha,
+    the same as the icon buttons (measured offscreen; not yet compared by eye on the bar).
 
 ## Spotify integration facts
 
